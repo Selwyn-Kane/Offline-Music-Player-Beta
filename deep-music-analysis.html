@@ -1,0 +1,3190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔬 Music Analysis - Zero-Copy Edition</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+            color: #fff;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 0 0 20px rgba(220, 53, 69, 0.5);
+        }
+        
+        .badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.7em;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        
+        .instructions {
+            background: rgba(40, 167, 69, 0.1);
+            border: 2px solid #28a745;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .instructions h2 {
+            color: #28a745;
+            margin-bottom: 15px;
+        }
+        
+        .instructions ol {
+            margin-left: 20px;
+            line-height: 1.8;
+        }
+        
+        .feature-highlight {
+            background: rgba(102, 126, 234, 0.1);
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .feature-highlight h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .feature-item {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+            transition: all 0.3s ease;
+        }
+        
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(220, 53, 69, 0.5);
+        }
+        
+        button:disabled {
+            background: linear-gradient(135deg, #555 0%, #444 100%);
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+        
+        button.success {
+            background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+        }
+        
+        #progress-section {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        #progress-section.show {
+            display: block;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #222;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #dc3545 0%, #ff7788 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .stat-box {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #dc3545;
+        }
+        
+        .stat-label {
+            font-size: 0.9em;
+            color: #888;
+            margin-top: 5px;
+        }
+        
+        .performance-metrics {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .performance-metrics.show {
+            display: block;
+        }
+        
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .metric-card {
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid #667eea;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        
+        .metric-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .metric-label {
+            font-size: 0.85em;
+            color: #aaa;
+            margin-top: 5px;
+        }
+        
+        #results {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            padding: 20px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        .result-item {
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #666;
+            background: rgba(0, 0, 0, 0.3);
+        }
+        
+        .result-item.success {
+            border-color: #28a745;
+            background: rgba(40, 167, 69, 0.1);
+        }
+        
+        .result-item.error {
+            border-color: #dc3545;
+            background: rgba(220, 53, 69, 0.1);
+        }
+        
+        .result-item.info {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.1);
+        }
+        
+        .result-title {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        
+        .analysis-preview {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+            color: #0f0;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        
+        #results::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        #results::-webkit-scrollbar-track {
+            background: #1a1a1a;
+            border-radius: 4px;
+        }
+        
+        #results::-webkit-scrollbar-thumb {
+            background: #dc3545;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔬 Music Analysis <span class="badge">ZERO-COPY</span></h1>
+        
+        <div class="feature-highlight">
+            <h3>⚡ Powered by Web Audio Data Bridge</h3>
+            <div class="feature-list">
+                <div class="feature-item">✅ Zero-copy transfers</div>
+                <div class="feature-item">✅ Worker pool reuse</div>
+                <div class="feature-item">✅ Memory tracking</div>
+                <div class="feature-item">✅ Advanced error handling</div>
+                <div class="feature-item">✅ Performance monitoring</div>
+                <div class="feature-item">✅ Health checks</div>
+            </div>
+        </div>
+        
+        <div class="instructions">
+            <h2>📖 How to Use</h2>
+            <ol>
+                <li>Click <strong>"Select Music Folder"</strong> and choose your music folder</li>
+                <li>The tool will scan all audio files (MP3, M4A, FLAC, WAV, OGG)</li>
+                <li>Click <strong>"Analyze All Songs"</strong> to perform advanced analysis with zero-copy transfers</li>
+                <li>Watch real-time performance metrics showing memory savings</li>
+                <li>Download analysis files when complete</li>
+            </ol>
+        </div>
+        
+        <div class="button-group">
+            <button id="select-folder-btn">📁 Select Music Folder</button>
+            <button id="analyze-btn" disabled>🔬 Analyze All Songs</button>
+            <button id="download-zip-btn" disabled style="display: none;">💾 Download Analysis Files</button>
+        </div>
+        
+        <div id="progress-section">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill">0%</div>
+            </div>
+            <div id="status-text" style="text-align: center; margin-bottom: 15px;">Ready...</div>
+            
+            <div class="stats">
+                <div class="stat-box">
+                    <div class="stat-number" id="stat-total">0</div>
+                    <div class="stat-label">Total Songs</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number" id="stat-analyzed" style="color: #28a745;">0</div>
+                    <div class="stat-label">Analyzed</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number" id="stat-errors" style="color: #dc3545;">0</div>
+                    <div class="stat-label">Errors</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number" id="stat-time">0s</div>
+                    <div class="stat-label">Elapsed Time</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="performance-metrics" id="performance-metrics">
+            <h3 style="color: #667eea; margin-bottom: 15px;">⚡ Zero-Copy Performance Metrics</h3>
+            <div class="metric-grid">
+                <div class="metric-card">
+                    <div class="metric-value" id="metric-transfers">0</div>
+                    <div class="metric-label">Zero-Copy Transfers</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="metric-data-transferred">0 MB</div>
+                    <div class="metric-label">Data Transferred</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="metric-avg-transfer">0 ms</div>
+                    <div class="metric-label">Avg Transfer Time</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="metric-workers">0</div>
+                    <div class="metric-label">Active Workers</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="metric-memory-saved">0 MB</div>
+                    <div class="metric-label">Memory Saved vs Copy</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="metric-throughput">0 MB/s</div>
+                    <div class="metric-label">Throughput</div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="results"></div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+        // ============================================================================
+        // WEB AUDIO DATA BRIDGE - CORE COMPONENTS
+        // ============================================================================
+        
+        const MSG = {
+            ANALYZE_AUDIO: 'analyze_audio',
+            ANALYSIS_COMPLETE: 'analysis_complete',
+            WORKER_READY: 'worker_ready',
+            WORKER_ERROR: 'worker_error',
+            PING: 'ping',
+            PONG: 'pong'
+        };
+        
+        class TransferableDataManager {
+            constructor() {
+                this.transferRegistry = new Map();
+                this.totalBytesTransferred = 0;
+            }
+
+            audioBufferToTransferable(audioBuffer) {
+                const channels = [];
+                const transfers = [];
+                const bufferId = `buf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+                for (let i = 0; i < audioBuffer.numberOfChannels; i++) {
+                    const channelData = audioBuffer.getChannelData(i);
+                    const arrayBuffer = channelData.buffer;
+                    
+                    channels.push({
+                        buffer: arrayBuffer,
+                        byteOffset: channelData.byteOffset,
+                        byteLength: channelData.byteLength
+                    });
+                    
+                    transfers.push(arrayBuffer);
+                }
+
+                const totalSize = transfers.reduce((sum, buf) => sum + buf.byteLength, 0);
+                this.totalBytesTransferred += totalSize;
+
+                this.transferRegistry.set(bufferId, {
+                    numberOfChannels: audioBuffer.numberOfChannels,
+                    length: audioBuffer.length,
+                    sampleRate: audioBuffer.sampleRate,
+                    transferredAt: performance.now(),
+                    size: totalSize
+                });
+
+                return {
+                    transferable: {
+                        id: bufferId,
+                        channels,
+                        sampleRate: audioBuffer.sampleRate,
+                        length: audioBuffer.length,
+                        numberOfChannels: audioBuffer.numberOfChannels
+                    },
+                    transfers,
+                    size: totalSize
+                };
+            }
+
+            getStats() {
+                const entries = Array.from(this.transferRegistry.values());
+                const totalSize = entries.reduce((sum, e) => sum + e.size, 0);
+                
+                return {
+                    activeBuffers: entries.length,
+                    totalMemoryBytes: totalSize,
+                    totalMemoryMB: (totalSize / (1024 * 1024)).toFixed(2),
+                    totalBytesTransferred: this.totalBytesTransferred,
+                    totalMBTransferred: (this.totalBytesTransferred / (1024 * 1024)).toFixed(2)
+                };
+            }
+        }
+
+        class EnhancedWorkerProxy {
+            constructor(worker, workerId, timeout = 120000) {
+                this.worker = worker;
+                this.workerId = workerId;
+                this.timeout = timeout;
+                this.messageHandlers = new Map();
+                this.requestId = 0;
+                this.pendingRequests = new Map();
+                this.isTerminated = false;
+
+                this.worker.onmessage = (e) => this.handleMessage(e);
+                this.worker.onerror = (e) => this.handleError(e);
+            }
+
+            handleMessage(e) {
+                const { type, requestId, data, error } = e.data;
+
+                if (requestId && this.pendingRequests.has(requestId)) {
+                    const { resolve, reject, timeoutId } = this.pendingRequests.get(requestId);
+                    clearTimeout(timeoutId);
+                    this.pendingRequests.delete(requestId);
+
+                    if (error) {
+                        reject(new Error(error));
+                    } else {
+                        resolve(data);
+                    }
+                }
+
+                if (this.messageHandlers.has(type)) {
+                    this.messageHandlers.get(type)(data);
+                }
+            }
+
+            handleError(error) {
+                console.error(`Worker ${this.workerId} error:`, error);
+                
+                for (const [requestId, { reject, timeoutId }] of this.pendingRequests) {
+                    clearTimeout(timeoutId);
+                    reject(new Error(`Worker error: ${error.message}`));
+                }
+                
+                this.pendingRequests.clear();
+
+                if (this.messageHandlers.has(MSG.WORKER_ERROR)) {
+                    this.messageHandlers.get(MSG.WORKER_ERROR)(error);
+                }
+            }
+
+            send(type, data, transfers = []) {
+                if (this.isTerminated) {
+                    return Promise.reject(new Error('Worker is terminated'));
+                }
+
+                const requestId = ++this.requestId;
+
+                return new Promise((resolve, reject) => {
+                    const timeoutId = setTimeout(() => {
+                        if (this.pendingRequests.has(requestId)) {
+                            this.pendingRequests.delete(requestId);
+                            reject(new Error(`Worker request timeout after ${this.timeout}ms`));
+                        }
+                    }, this.timeout);
+
+                    this.pendingRequests.set(requestId, { resolve, reject, timeoutId });
+
+                    try {
+                        this.worker.postMessage({
+                            type,
+                            requestId,
+                            data
+                        }, transfers);
+                    } catch (error) {
+                        clearTimeout(timeoutId);
+                        this.pendingRequests.delete(requestId);
+                        reject(error);
+                    }
+                });
+            }
+
+            on(type, handler) {
+                this.messageHandlers.set(type, handler);
+            }
+
+            terminate() {
+                this.isTerminated = true;
+                
+                for (const { timeoutId } of this.pendingRequests.values()) {
+                    clearTimeout(timeoutId);
+                }
+                this.pendingRequests.clear();
+                
+                this.worker.terminate();
+            }
+        }
+
+        class WorkerConnectionPool {
+            constructor(options = {}) {
+                this.maxWorkers = options.maxWorkers || 4;
+                this.workerTimeout = options.workerTimeout || 120000;
+                this.healthCheckInterval = options.healthCheckInterval || 10000;
+                
+                this.workers = new Map();
+                this.availableWorkers = [];
+                this.requestQueue = [];
+                this.workerStats = new Map();
+                
+                this.healthCheckTimer = null;
+            }
+
+            async createWorker(workerId, workerCode) {
+                const blob = new Blob([workerCode], { type: 'application/javascript' });
+                const workerUrl = URL.createObjectURL(blob);
+                const worker = new Worker(workerUrl);
+                
+                const proxy = new EnhancedWorkerProxy(worker, workerId, this.workerTimeout);
+                
+                proxy.on(MSG.PONG, () => {
+                    this.updateWorkerHealth(workerId, true);
+                });
+                
+                proxy.on(MSG.WORKER_ERROR, (error) => {
+                    this.handleWorkerError(workerId, error);
+                });
+
+                this.workers.set(workerId, proxy);
+                this.availableWorkers.push(workerId);
+                this.workerStats.set(workerId, {
+                    created: Date.now(),
+                    requests: 0,
+                    errors: 0,
+                    lastHealthy: Date.now(),
+                    healthy: true
+                });
+
+                return proxy;
+            }
+
+            async getWorker() {
+                if (this.availableWorkers.length > 0) {
+                    const workerId = this.availableWorkers.shift();
+                    const proxy = this.workers.get(workerId);
+                    
+                    const stats = this.workerStats.get(workerId);
+                    stats.requests++;
+                    
+                    return { workerId, proxy };
+                }
+
+                if (this.workers.size < this.maxWorkers) {
+                    const workerId = `worker_${this.workers.size}`;
+                    const proxy = await this.createWorker(workerId, getWorkerCode());
+                    
+                    return { workerId, proxy };
+                }
+
+                return new Promise((resolve) => {
+                    this.requestQueue.push(resolve);
+                });
+            }
+
+            releaseWorker(workerId) {
+                if (!this.availableWorkers.includes(workerId)) {
+                    this.availableWorkers.push(workerId);
+                }
+
+                if (this.requestQueue.length > 0) {
+                    const resolve = this.requestQueue.shift();
+                    const proxy = this.workers.get(workerId);
+                    resolve({ workerId, proxy });
+                }
+            }
+
+            updateWorkerHealth(workerId, healthy) {
+                const stats = this.workerStats.get(workerId);
+                if (stats) {
+                    stats.healthy = healthy;
+                    stats.lastHealthy = Date.now();
+                }
+            }
+
+            handleWorkerError(workerId, error) {
+                const stats = this.workerStats.get(workerId);
+                if (stats) {
+                    stats.errors++;
+                    stats.healthy = false;
+                }
+
+                const index = this.availableWorkers.indexOf(workerId);
+                if (index > -1) {
+                    this.availableWorkers.splice(index, 1);
+                }
+            }
+
+            getStats() {
+                return {
+                    totalWorkers: this.workers.size,
+                    availableWorkers: this.availableWorkers.length,
+                    busyWorkers: this.workers.size - this.availableWorkers.length,
+                    queuedRequests: this.requestQueue.length
+                };
+            }
+
+            terminateAll() {
+                for (const proxy of this.workers.values()) {
+                    proxy.terminate();
+                }
+                
+                this.workers.clear();
+                this.availableWorkers = [];
+                this.requestQueue = [];
+                this.workerStats.clear();
+            }
+        }
+
+        // ============================================================================
+        // MUSIC ANALYSIS APPLICATION WITH BRIDGE INTEGRATION
+        // ============================================================================
+        
+        class IntegratedMusicAnalyzer {
+            constructor() {
+                this.dataManager = new TransferableDataManager();
+                this.workerPool = new WorkerConnectionPool({ 
+                    maxWorkers: Math.min(4, navigator.hardwareConcurrency || 2),
+                    workerTimeout: 120000
+                });
+                
+                this.musicFiles = [];
+                this.analysisFiles = {};
+                this.stats = { total: 0, analyzed: 0, errors: 0 };
+                this.startTime = 0;
+                this.transferTimes = [];
+                
+                this.initUI();
+                this.initWorkers();
+            }
+            
+            async initWorkers() {
+                const numWorkers = Math.min(4, navigator.hardwareConcurrency || 2);
+                for (let i = 0; i < numWorkers; i++) {
+                    await this.workerPool.createWorker(`analyzer_${i}`, getWorkerCode());
+                }
+                
+                addResult(`✅ Initialized ${numWorkers} workers with zero-copy support`, 'info');
+            }
+            
+            initUI() {
+                this.selectFolderBtn = document.getElementById('select-folder-btn');
+                this.analyzeBtn = document.getElementById('analyze-btn');
+                this.downloadZipBtn = document.getElementById('download-zip-btn');
+                this.progressSection = document.getElementById('progress-section');
+                this.performanceMetrics = document.getElementById('performance-metrics');
+                this.progressFill = document.getElementById('progress-fill');
+                this.statusText = document.getElementById('status-text');
+                this.resultsDiv = document.getElementById('results');
+
+                this.selectFolderBtn.onclick = () => this.selectFolder();
+                this.analyzeBtn.onclick = () => this.analyzeAll();
+                this.downloadZipBtn.onclick = () => this.downloadZip();
+                
+                this.startPerformanceMonitor();
+            }
+            
+            async selectFolder() {
+                try {
+                    const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+                    
+                    this.musicFiles = [];
+                    this.statusText.textContent = 'Scanning folder...';
+                    this.progressSection.classList.add('show');
+                    
+                    for await (const entry of dirHandle.values()) {
+                        if (entry.kind === 'file') {
+                            const file = await entry.getFile();
+                            if (file.name.match(/\.(mp3|m4a|flac|wav|ogg|aac)$/i)) {
+                                this.musicFiles.push(file);
+                            }
+                        }
+                    }
+                    
+                    this.stats.total = this.musicFiles.length;
+                    updateStats(this.stats);
+                    
+                    addResult(`Found ${this.musicFiles.length} audio files`, 'success');
+                    this.statusText.textContent = `Ready to analyze ${this.musicFiles.length} songs`;
+                    this.analyzeBtn.disabled = false;
+                    this.selectFolderBtn.textContent = `✅ ${this.musicFiles.length} Songs Loaded`;
+                    this.selectFolderBtn.classList.add('success');
+                    
+                } catch (err) {
+                    addResult(`Error: ${err.message}`, 'error');
+                }
+            }
+            
+            async analyzeAll() {
+                if (this.musicFiles.length === 0) {
+                    alert('No tracks loaded!');
+                    return;
+                }
+                
+                this.analyzeBtn.disabled = true;
+                this.selectFolderBtn.disabled = true;
+                this.resultsDiv.innerHTML = '';
+                this.stats = { total: this.musicFiles.length, analyzed: 0, errors: 0 };
+                this.analysisFiles = {};
+                this.startTime = Date.now();
+                this.transferTimes = [];
+                
+                this.performanceMetrics.classList.add('show');
+                
+                addResult(`🚀 Starting parallel analysis with zero-copy transfers...`, 'info');
+                
+                let jobIndex = 0;
+                const totalJobs = this.musicFiles.length;
+                
+                const processJobs = async (workerNum) => {
+                    while (jobIndex < totalJobs) {
+                        const currentIndex = jobIndex++;
+                        const file = this.musicFiles[currentIndex];
+                        
+                        try {
+                            this.statusText.textContent = `Worker ${workerNum} decoding: ${file.name}`;
+                            
+                            // Decode audio
+                            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                            const arrayBuffer = await file.arrayBuffer();
+                            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                            
+                            // Get worker
+                            const { workerId, proxy } = await this.workerPool.getWorker();
+                            
+                            try {
+                                this.statusText.textContent = `Worker ${workerNum} analyzing: ${file.name} (Zero-Copy)`;
+
+// Determine optimal analysis strategy
+const strategy = this.determineAnalysisStrategy(audioBuffer, file.name);
+
+// ZERO-COPY TRANSFER HERE!
+const transferStart = performance.now();
+const { transferable, transfers, size } = 
+    this.dataManager.audioBufferToTransferable(audioBuffer);
+
+const analysis = await proxy.send(
+    MSG.ANALYZE_AUDIO,
+    {
+        ...transferable,
+        duration: audioBuffer.duration,
+        filename: file.name,
+        strategy: strategy // ADD THIS
+    },
+    transfers
+);
+                                
+                                const transferTime = performance.now() - transferStart;
+                                this.transferTimes.push({ time: transferTime, size });
+                                
+                                await audioContext.close();
+                                
+                                // Save results
+                                const txtContent = formatAnalysisAsText(file.name, analysis);
+                                const txtFilename = file.name.replace(/\.[^/.]+$/, '.txt');
+                                this.analysisFiles[txtFilename] = txtContent;
+                                
+                                this.stats.analyzed++;
+                                addResult(
+                                    `✅ ${file.name}: Complete (Worker ${workerNum}) - ` +
+                                    `${(size / 1024).toFixed(1)}KB transferred in ${transferTime.toFixed(1)}ms`, 
+                                    'success', 
+                                    analysis
+                                );
+                                
+                            } finally {
+                                this.workerPool.releaseWorker(workerId);
+                            }
+                            
+                        } catch (err) {
+                            this.stats.errors++;
+                            addResult(`❌ ${file.name}: ${err.message}`, 'error');
+                        }
+                        
+                        const progress = ((this.stats.analyzed + this.stats.errors) / totalJobs) * 100;
+                        this.progressFill.style.width = `${progress}%`;
+                        this.progressFill.textContent = `${Math.round(progress)}%`;
+                        this.statusText.textContent = `Progress: ${this.stats.analyzed + this.stats.errors}/${totalJobs}`;
+                        updateStats(this.stats);
+                    }
+                };
+                
+                const numWorkers = Math.min(4, navigator.hardwareConcurrency || 2);
+                const workerPromises = [];
+                for (let i = 0; i < numWorkers; i++) {
+                    workerPromises.push(processJobs(i + 1));
+                }
+                
+                await Promise.all(workerPromises);
+                
+                this.statusText.textContent = `✅ Complete! Analyzed ${this.stats.analyzed}/${this.stats.total} songs`;
+                this.analyzeBtn.disabled = false;
+                this.selectFolderBtn.disabled = false;
+                
+                if (Object.keys(this.analysisFiles).length > 0) {
+                    this.downloadZipBtn.style.display = 'inline-block';
+                    this.downloadZipBtn.disabled = false;
+                }
+                
+                const totalTime = Math.floor((Date.now() - this.startTime) / 1000);
+                const avgTime = this.stats.analyzed > 0 ? (totalTime / this.stats.analyzed).toFixed(1) : 0;
+                
+                const bridgeStats = this.dataManager.getStats();
+                const avgTransfer = this.transferTimes.reduce((sum, t) => sum + t.time, 0) / this.transferTimes.length;
+                const copyCost = bridgeStats.totalBytesTransferred * 0.01; // Estimate: 10ms per MB for copy
+                const memorySaved = bridgeStats.totalBytesTransferred; // Full data duplication avoided
+                
+                addResult(
+                    `⚡ Performance: ${totalTime}s total, ${avgTime}s per song | ` +
+                    `${bridgeStats.totalMBTransferred}MB transferred | ` +
+                    `Avg transfer: ${avgTransfer.toFixed(1)}ms | ` +
+                    `Est. ${(memorySaved / 1024 / 1024).toFixed(1)}MB memory saved vs copying`,
+                    'info'
+                );
+            }
+            
+            async downloadZip() {
+                const zip = new JSZip();
+                
+                for (const [filename, content] of Object.entries(this.analysisFiles)) {
+                    zip.file(filename, content);
+                }
+                
+                const blob = await zip.generateAsync({ type: 'blob' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `music_analysis_${Date.now()}.zip`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                addResult(`📦 Downloaded ${Object.keys(this.analysisFiles).length} analysis files as ZIP`, 'success');
+            }
+            
+            startPerformanceMonitor() {
+                setInterval(() => {
+                    const bridgeStats = this.dataManager.getStats();
+                    const poolStats = this.workerPool.getStats();
+                    
+                    document.getElementById('metric-transfers').textContent = bridgeStats.activeBuffers;
+                    document.getElementById('metric-data-transferred').textContent = bridgeStats.totalMBTransferred + ' MB';
+                    
+                    if (this.transferTimes.length > 0) {
+                        const avgTransfer = this.transferTimes.reduce((sum, t) => sum + t.time, 0) / this.transferTimes.length;
+                        document.getElementById('metric-avg-transfer').textContent = avgTransfer.toFixed(1) + ' ms';
+                        
+                        const totalSize = this.transferTimes.reduce((sum, t) => sum + t.size, 0);
+                        const totalTime = this.transferTimes.reduce((sum, t) => sum + t.time, 0) / 1000;
+                        const throughput = totalTime > 0 ? (totalSize / totalTime / (1024 * 1024)) : 0;
+                        document.getElementById('metric-throughput').textContent = throughput.toFixed(1) + ' MB/s';
+                    }
+                    
+                    document.getElementById('metric-workers').textContent = poolStats.totalWorkers;
+                    
+                    // Estimate memory saved (vs copying the data)
+                    const memorySaved = bridgeStats.totalBytesTransferred;
+                    document.getElementById('metric-memory-saved').textContent = 
+                        (memorySaved / 1024 / 1024).toFixed(1) + ' MB';
+                    
+                }, 500);
+            }
+            determineAnalysisStrategy(audioBuffer, filename) {
+    const duration = audioBuffer.duration;
+    const sampleRate = audioBuffer.sampleRate;
+    
+    // Short songs: full analysis
+    if (duration < 180) { // < 3 minutes
+        return {
+            maxSegments: 20,
+            fftSize: 8192,
+            chromaSegments: 20,
+            bpmWindow: 30,
+            priority: 'high',
+            reason: 'short-song'
+        };
+    }
+    
+    // Long songs: optimized analysis
+    if (duration > 360) { // > 6 minutes
+        return {
+            maxSegments: 12,
+            fftSize: 4096,
+            chromaSegments: 12,
+            bpmWindow: 20,
+            priority: 'normal',
+            reason: 'long-song-optimized'
+        };
+    }
+    
+    // Very long songs: aggressive optimization
+    if (duration > 600) { // > 10 minutes
+        return {
+            maxSegments: 8,
+            fftSize: 2048,
+            chromaSegments: 8,
+            bpmWindow: 15,
+            priority: 'low',
+            reason: 'very-long-song'
+        };
+    }
+    
+    // Normal songs: balanced
+    return {
+        maxSegments: 15,
+        fftSize: 8192,
+        chromaSegments: 15,
+        bpmWindow: 25,
+        priority: 'normal',
+        reason: 'balanced'
+    };
+}
+        }
+        
+        // ============================================================================
+        // UTILITY FUNCTIONS
+        // ============================================================================
+        
+        function addResult(message, type, analysis = null) {
+            const resultsDiv = document.getElementById('results');
+            const item = document.createElement('div');
+            item.className = `result-item ${type}`;
+            item.innerHTML = `<div class="result-title">${message}</div>`;
+            
+            if (analysis) {
+                const preview = document.createElement('div');
+                preview.className = 'analysis-preview';
+                preview.textContent = `BPM: ${analysis.bpm} | Key: ${analysis.key} ${analysis.mode} | Genre: ${analysis.genre} | Energy: ${(analysis.energy * 100).toFixed(0)}% | Mood: ${analysis.mood}`;
+                item.appendChild(preview);
+            }
+            
+            resultsDiv.appendChild(item);
+            resultsDiv.scrollTop = resultsDiv.scrollHeight;
+        }
+        
+        function updateStats(stats) {
+            document.getElementById('stat-total').textContent = stats.total;
+            document.getElementById('stat-analyzed').textContent = stats.analyzed;
+            document.getElementById('stat-errors').textContent = stats.errors;
+            
+            const elapsed = Math.floor((Date.now() - app.startTime) / 1000);
+            document.getElementById('stat-time').textContent = `${elapsed}s`;
+        }
+        
+        function formatAnalysisAsText(filename, analysis) {
+    return `ADVANCED MUSIC ANALYSIS
+================================================================================
+File: ${filename}
+Analyzed: ${new Date().toLocaleString()}
+Analysis Method: Advanced FFT + Chromagram + Autocorrelation
+================================================================================
+
+BASIC METRICS:
+--------------
+Duration: ${formatTime(analysis.duration)}
+BPM: ${analysis.bpm} [Confidence: ${analysis.bpmConfidence === 'high' ? '✓ High' : analysis.bpmConfidence === 'medium' ? '~ Medium' : '✗ Low'}]
+Key: ${analysis.key} ${analysis.mode} [Confidence: ${analysis.keyConfidence === 'high' ? '✓ High' : analysis.keyConfidence === 'medium' ? '~ Medium' : '✗ Low'}]
+Tempo: ${analysis.tempo}
+Genre: ${analysis.genre}
+Mood: ${analysis.mood}
+
+AUDIO CHARACTERISTICS:
+----------------------
+Energy: ${(analysis.energy * 100).toFixed(1)}% (${analysis.loudnessLUFS.toFixed(1)} LUFS)
+Loudness: ${(analysis.loudness * 100).toFixed(1)}%
+Danceability: ${(analysis.danceability * 100).toFixed(1)}%
+Valence (Positivity): ${(analysis.valence * 100).toFixed(1)}%
+Speechiness: ${(analysis.speechiness * 100).toFixed(1)}%
+Acousticness: ${(analysis.acousticness * 100).toFixed(1)}%
+Instrumentalness: ${(analysis.instrumentalness * 100).toFixed(1)}%
+
+SPECTRAL FEATURES:
+------------------
+Spectral Centroid: ${Math.round(analysis.spectralCentroid)} Hz
+Spectral Rolloff: ${Math.round(analysis.spectralRolloff)} Hz
+Spectral Flux: ${analysis.spectralFlux.toFixed(4)}
+Zero-Crossing Rate: ${analysis.zeroCrossingRate.toFixed(6)}
+Vocal Prominence: ${analysis.vocalProminence.toFixed(2)}
+
+RHYTHM & DYNAMICS:
+------------------
+Onset Rate: ${analysis.onsetRate.toFixed(2)} onsets/sec
+Rhythmic Complexity: ${analysis.rhythmicComplexity}
+Crest Factor: ${analysis.dynamicRange.crestFactor.toFixed(1)} dB
+Dynamic Range: ${analysis.dynamicRange.classification}
+Peak Amplitude: ${analysis.dynamicRange.peak.toFixed(4)}
+RMS: ${analysis.dynamicRange.rms.toFixed(4)}
+
+FREQUENCY BANDS:
+----------------
+Sub-Bass (<60 Hz): ${(analysis.frequencyBands.subBass * 100).toFixed(1)}%
+Bass (60-200 Hz): ${(analysis.frequencyBands.bass * 100).toFixed(1)}%
+Low-Mid (200-500 Hz): ${(analysis.frequencyBands.lowMid * 100).toFixed(1)}%
+Midrange (500-2000 Hz): ${(analysis.frequencyBands.midrange * 100).toFixed(1)}%
+Presence (2000-6000 Hz): ${(analysis.frequencyBands.presence * 100).toFixed(1)}%
+Brilliance (6000+ Hz): ${(analysis.frequencyBands.brilliance * 100).toFixed(1)}%
+
+RECORDING CHARACTERISTICS:
+--------------------------
+Vintage Recording: ${analysis.isVintage ? 'Yes' : 'No'}
+
+================================================================================
+Generated by Advanced Music Analysis Tool
+Algorithms: FFT, Chromagram, Autocorrelation, Onset Detection
+For use with Ultimate Local Music Player
+================================================================================`;
+}
+        
+        function formatTime(seconds) {
+            const min = Math.floor(seconds / 60);
+            const sec = Math.floor(seconds % 60);
+            return `${min}:${sec.toString().padStart(2, '0')}`;
+        }
+        
+        // ============================================================================
+        // WORKER CODE
+        // ============================================================================
+        
+// ============================================================================
+        // WORKER CODE - FULL ANALYSIS ALGORITHMS
+        // ============================================================================
+        
+        function getWorkerCode() {
+    return `
+        const MSG_TYPES = ${JSON.stringify(MSG)};
+        
+        self.onmessage = async function(e) {
+            const { type, requestId, data } = e.data;
+            
+            try {
+                if (type === MSG_TYPES.PING) {
+                    self.postMessage({ type: MSG_TYPES.PONG, requestId });
+                    return;
+                }
+                
+                if (type === MSG_TYPES.ANALYZE_AUDIO) {
+    // Reconstruct Float32Array from transferred ArrayBuffer
+    const channelData = [];
+    for (const ch of data.channels) {
+        const float32 = new Float32Array(ch.buffer, ch.byteOffset, ch.byteLength / 4);
+        channelData.push(float32);
+    }
+    
+    // Get analysis strategy (with defaults)
+    const strategy = data.strategy || {
+        maxSegments: 15,
+        fftSize: 8192,
+        chromaSegments: 15,
+        bpmWindow: 25
+    };
+    
+    // Mix to mono if stereo
+    const mono = data.numberOfChannels === 1 
+        ? Array.from(channelData[0])
+        : Array.from(channelData[0]).map((v, i) => (v + channelData[1][i]) / 2);
+    
+    // FULL ADVANCED ANALYSIS (now with strategy)
+    const spectralFeatures = await computeSpectralFeatures(mono, data.sampleRate, strategy);
+    const bpmResult = await detectBPMAutocorrelation(mono, data.sampleRate, strategy);
+    const keyResult = await detectKeyChromagram(mono, data.sampleRate, strategy);
+                    const energyAnalysis = computeEnergyMetrics(mono, data.sampleRate);
+                    const rhythmFeatures = await detectOnsets(mono, data.sampleRate);
+                    const zcr = computeZeroCrossingRate(mono);
+                    
+                    const speechiness = computeSpeechiness(spectralFeatures, zcr);
+                    const acousticness = computeAcousticness(spectralFeatures, energyAnalysis);
+                    const valence = computeValence(bpmResult.bpm, energyAnalysis.energy, spectralFeatures.spectralCentroid, keyResult, energyAnalysis.dynamicRange);
+                    const instrumentalness = 1 - speechiness;
+                    
+                    const genre = classifyGenre({
+                        bpm: bpmResult.bpm,
+                        energy: energyAnalysis.energy,
+                        spectralCentroid: spectralFeatures.spectralCentroid,
+                        bassEnergy: spectralFeatures.frequencyBands.bass,
+                        danceability: rhythmFeatures.danceability,
+                        valence: valence
+                    });
+                    
+                    const mood = detectMoodAdvanced(energyAnalysis.energy, valence, bpmResult.bpm);
+                    
+                    self.postMessage({
+                        type: MSG_TYPES.ANALYSIS_COMPLETE,
+                        requestId,
+                        data: {
+                            filename: data.filename,
+                            duration: data.duration,
+                            bpm: bpmResult.bpm,
+                            bpmConfidence: bpmResult.confidence,
+                            key: keyResult.key,
+                            keyConfidence: keyResult.confidence,
+                            mode: keyResult.mode,
+                            energy: energyAnalysis.energy,
+                            loudness: energyAnalysis.loudness,
+                            loudnessLUFS: energyAnalysis.loudnessLUFS,
+                            danceability: rhythmFeatures.danceability,
+                            valence: valence,
+                            speechiness: speechiness,
+                            acousticness: acousticness,
+                            instrumentalness: instrumentalness,
+                            spectralCentroid: spectralFeatures.spectralCentroid,
+                            spectralRolloff: spectralFeatures.spectralRolloff,
+                            spectralFlux: spectralFeatures.spectralFlux,
+                            zeroCrossingRate: zcr,
+                            mood: mood,
+                            genre: genre,
+                            tempo: classifyTempo(bpmResult.bpm),
+                            dynamicRange: energyAnalysis.dynamicRange,
+                            frequencyBands: spectralFeatures.frequencyBands,
+                            vocalProminence: spectralFeatures.frequencyBands.presence / (spectralFeatures.frequencyBands.lowMid + 0.001),
+                            isVintage: detectVintage(spectralFeatures.spectralCentroid, energyAnalysis.dynamicRange.crestFactor, spectralFeatures.frequencyBands),
+                            onsetRate: rhythmFeatures.onsetRate,
+                            rhythmicComplexity: rhythmFeatures.complexity
+                        }
+                    });
+                }
+            } catch (error) {
+                self.postMessage({
+                    type: MSG_TYPES.WORKER_ERROR,
+                    requestId,
+                    error: error.message
+                });
+            }
+        };
+        
+        // === UTILITY FUNCTIONS ===
+        function yieldToMainThread() {
+            return new Promise(resolve => setTimeout(resolve, 0));
+        }
+        
+        // === SPECTRAL ANALYSIS ===
+        function computePowerSpectrum(signal) {
+    // Proper Cooley-Tukey FFT implementation
+    const fftSize = Math.pow(2, Math.ceil(Math.log2(signal.length)));
+    const padded = new Float32Array(fftSize);
+    
+    // Apply Hamming window and pad
+    for (let i = 0; i < signal.length; i++) {
+        padded[i] = signal[i] * (0.54 - 0.46 * Math.cos(2 * Math.PI * i / (signal.length - 1)));
+    }
+    
+    // Perform FFT
+    const real = new Float32Array(padded);
+    const imag = new Float32Array(fftSize);
+    fft(real, imag);
+    
+    // Compute magnitude spectrum (only need first half due to symmetry)
+    const spectrum = new Float32Array(fftSize / 2);
+    for (let i = 0; i < spectrum.length; i++) {
+        spectrum[i] = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]) / fftSize;
+    }
+    
+    return spectrum;
+}
+
+// Cooley-Tukey FFT (radix-2, in-place)
+function fft(real, imag) {
+    const n = real.length;
+    if (n <= 1) return;
+    
+    // Bit-reversal permutation
+    let j = 0;
+    for (let i = 0; i < n - 1; i++) {
+        if (i < j) {
+            [real[i], real[j]] = [real[j], real[i]];
+            [imag[i], imag[j]] = [imag[j], imag[i]];
+        }
+        let k = n >> 1;
+        while (k <= j) {
+            j -= k;
+            k >>= 1;
+        }
+        j += k;
+    }
+    
+    // Cooley-Tukey butterfly computations
+    for (let size = 2; size <= n; size *= 2) {
+        const halfSize = size / 2;
+        const angle = -2 * Math.PI / size;
+        
+        for (let i = 0; i < n; i += size) {
+            for (let k = 0; k < halfSize; k++) {
+                const theta = angle * k;
+                const wReal = Math.cos(theta);
+                const wImag = Math.sin(theta);
+                
+                const evenIdx = i + k;
+                const oddIdx = i + k + halfSize;
+                
+                const tReal = wReal * real[oddIdx] - wImag * imag[oddIdx];
+                const tImag = wReal * imag[oddIdx] + wImag * real[oddIdx];
+                
+                real[oddIdx] = real[evenIdx] - tReal;
+                imag[oddIdx] = imag[evenIdx] - tImag;
+                real[evenIdx] += tReal;
+                imag[evenIdx] += tImag;
+            }
+        }
+    }
+}
+        
+        async function computeSpectralFeatures(data, sampleRate, strategy) {
+    const segmentDuration = 5;
+    const numSegments = Math.min(
+        strategy.maxSegments, 
+        Math.ceil(data.length / (segmentDuration * sampleRate))
+    );
+    
+    // Arrays to collect measurements across segments
+    const centroids = [];
+    const rolloffs = [];
+    const fluxes = [];
+    const flatnesses = [];
+    const crests = [];
+    const slopes = [];
+    const barkBands = { sub: [], low: [], lowMid: [], mid: [], highMid: [], high: [], veryHigh: [] };
+    
+    let prevSpectrum = null;
+    
+    for (let seg = 0; seg < numSegments; seg++) {
+        if (seg % 2 === 0) await yieldToMainThread();
+        
+        const startSample = Math.floor(seg * segmentDuration * sampleRate);
+        const segmentLength = Math.min(strategy.fftSize || 8192, data.length - startSample);
+        const segment = data.slice(startSample, startSample + segmentLength);
+        const spectrum = computePowerSpectrum(segment);
+        
+        // Apply A-weighting for perceptual accuracy
+        const weightedSpectrum = applyAWeighting(spectrum, sampleRate);
+        
+        // === SPECTRAL CENTROID (weighted by A-weighting) ===
+        let weightedSum = 0;
+        let totalPower = 0;
+        
+        for (let i = 1; i < weightedSpectrum.length; i++) { // Skip DC
+            const freq = (i / spectrum.length) * (sampleRate / 2);
+            weightedSum += freq * weightedSpectrum[i];
+            totalPower += weightedSpectrum[i];
+        }
+        
+        const centroid = totalPower > 0 ? weightedSum / totalPower : 1500;
+        centroids.push(centroid);
+        
+        // === SPECTRAL ROLLOFF (85% energy point) ===
+        let energySum = 0;
+        const threshold = totalPower * 0.85;
+        let rolloff = 0;
+        
+        for (let i = 1; i < weightedSpectrum.length; i++) {
+            energySum += weightedSpectrum[i];
+            if (energySum >= threshold) {
+                rolloff = (i / spectrum.length) * (sampleRate / 2);
+                break;
+            }
+        }
+        rolloffs.push(rolloff || sampleRate / 4);
+        
+        // === SPECTRAL FLUX ===
+        if (prevSpectrum) {
+            let flux = 0;
+            const minLen = Math.min(spectrum.length, prevSpectrum.length);
+            for (let i = 0; i < minLen; i++) {
+                const diff = spectrum[i] - prevSpectrum[i];
+                flux += diff * diff;
+            }
+            fluxes.push(Math.sqrt(flux / minLen));
+        }
+        
+        // === SPECTRAL FLATNESS (Wiener entropy) ===
+        let geometricMean = 0;
+        let arithmeticMean = 0;
+        let validBins = 0;
+        
+        for (let i = 1; i < spectrum.length; i++) {
+            if (spectrum[i] > 1e-10) {
+                geometricMean += Math.log(spectrum[i]);
+                arithmeticMean += spectrum[i];
+                validBins++;
+            }
+        }
+        
+        if (validBins > 0) {
+            geometricMean = Math.exp(geometricMean / validBins);
+            arithmeticMean = arithmeticMean / validBins;
+            const flatness = arithmeticMean > 0 ? geometricMean / arithmeticMean : 0;
+            flatnesses.push(flatness);
+        }
+        
+        // === SPECTRAL CREST ===
+        const maxMagnitude = Math.max(...spectrum.slice(1));
+        const meanMagnitude = spectrum.slice(1).reduce((a, b) => a + b, 0) / (spectrum.length - 1);
+        const crest = meanMagnitude > 0 ? maxMagnitude / meanMagnitude : 1;
+        crests.push(crest);
+        
+        // === SPECTRAL SLOPE (linear regression of log spectrum) ===
+        const logSpectrum = [];
+        for (let i = 1; i < spectrum.length; i++) {
+            if (spectrum[i] > 1e-10) {
+                logSpectrum.push(Math.log10(spectrum[i]));
+            }
+        }
+        
+        if (logSpectrum.length > 10) {
+            const n = logSpectrum.length;
+            const meanY = logSpectrum.reduce((a, b) => a + b, 0) / n;
+            const meanX = (n - 1) / 2;
+            
+            let numerator = 0;
+            let denominator = 0;
+            for (let i = 0; i < n; i++) {
+                numerator += (i - meanX) * (logSpectrum[i] - meanY);
+                denominator += (i - meanX) * (i - meanX);
+            }
+            
+            const slope = denominator > 0 ? numerator / denominator : 0;
+            slopes.push(slope);
+        }
+        
+        // === BARK-SCALE FREQUENCY BANDS ===
+        const barkBandMeasurements = computeBarkBands(spectrum, sampleRate);
+        barkBands.sub.push(barkBandMeasurements.sub);
+        barkBands.low.push(barkBandMeasurements.low);
+        barkBands.lowMid.push(barkBandMeasurements.lowMid);
+        barkBands.mid.push(barkBandMeasurements.mid);
+        barkBands.highMid.push(barkBandMeasurements.highMid);
+        barkBands.high.push(barkBandMeasurements.high);
+        barkBands.veryHigh.push(barkBandMeasurements.veryHigh);
+        
+        prevSpectrum = spectrum;
+    }
+    
+    // === AGGREGATE WITH ROBUST STATISTICS ===
+    const medianCentroid = median(centroids);
+    const medianRolloff = median(rolloffs);
+    const meanFlux = fluxes.length > 0 ? fluxes.reduce((a, b) => a + b, 0) / fluxes.length : 0;
+    const medianFlatness = median(flatnesses);
+    const medianCrest = median(crests);
+    const medianSlope = median(slopes);
+    
+    // Aggregate bark bands (use median for robustness)
+    const aggregatedBands = {
+        subBass: median(barkBands.sub),
+        bass: median(barkBands.low),
+        lowMid: median(barkBands.lowMid),
+        midrange: median(barkBands.mid),
+        presence: median(barkBands.highMid),
+        brilliance: (median(barkBands.high) + median(barkBands.veryHigh)) / 2
+    };
+    
+    // Normalize frequency bands to sum to 1.0
+    const totalBandEnergy = Object.values(aggregatedBands).reduce((sum, val) => sum + val, 0);
+    if (totalBandEnergy > 0) {
+        Object.keys(aggregatedBands).forEach(key => {
+            aggregatedBands[key] = aggregatedBands[key] / totalBandEnergy;
+        });
+    }
+    
+    return {
+        spectralCentroid: medianCentroid,
+        spectralRolloff: medianRolloff,
+        spectralFlux: meanFlux,
+        spectralFlatness: medianFlatness,
+        spectralCrest: medianCrest,
+        spectralSlope: medianSlope,
+        frequencyBands: aggregatedBands,
+        // Additional derived features
+        brightness: medianCentroid / (sampleRate / 2), // Normalized brightness
+        harmonicity: 1 - medianFlatness, // Inverse of flatness
+        noisiness: medianFlatness
+    };
+}
+
+// Apply A-weighting curve for perceptual loudness
+function applyAWeighting(spectrum, sampleRate) {
+    const weighted = new Float32Array(spectrum.length);
+    
+    for (let i = 0; i < spectrum.length; i++) {
+        const freq = (i / spectrum.length) * (sampleRate / 2);
+        
+        if (freq < 20) {
+            weighted[i] = spectrum[i] * 0.01; // Heavy attenuation below 20 Hz
+        } else {
+            // A-weighting formula
+            const f2 = freq * freq;
+            const f4 = f2 * f2;
+            const numerator = 12194 * 12194 * f4;
+            const denominator = (f2 + 20.6 * 20.6) * 
+                                Math.sqrt((f2 + 107.7 * 107.7) * (f2 + 737.9 * 737.9)) * 
+                                (f2 + 12194 * 12194);
+            
+            const aWeight = numerator / (denominator + 1e-10);
+            weighted[i] = spectrum[i] * aWeight;
+        }
+    }
+    
+    return weighted;
+}
+
+// Compute energy in Bark-scale critical bands
+function computeBarkBands(spectrum, sampleRate) {
+    // Bark scale critical bands (perceptually uniform)
+    // Band edges in Hz
+    const bands = [
+        { name: 'sub', min: 0, max: 60 },          // Sub-bass
+        { name: 'low', min: 60, max: 250 },        // Bass (Bark 0-3)
+        { name: 'lowMid', min: 250, max: 500 },    // Low-mid (Bark 3-5)
+        { name: 'mid', min: 500, max: 2000 },      // Midrange (Bark 5-13)
+        { name: 'highMid', min: 2000, max: 4000 }, // Presence (Bark 13-18)
+        { name: 'high', min: 4000, max: 8000 },    // Brilliance low (Bark 18-21)
+        { name: 'veryHigh', min: 8000, max: 20000 } // Brilliance high (Bark 21-24)
+    ];
+    
+    const result = {};
+    
+    for (const band of bands) {
+        const minBin = Math.floor((band.min / (sampleRate / 2)) * spectrum.length);
+        const maxBin = Math.ceil((band.max / (sampleRate / 2)) * spectrum.length);
+        
+        let energy = 0;
+        let count = 0;
+        
+        for (let i = minBin; i < Math.min(maxBin, spectrum.length); i++) {
+            // Weight by Bark scale (perceptual frequency resolution)
+            const freq = (i / spectrum.length) * (sampleRate / 2);
+            const barkWeight = computeBarkWeight(freq, band.min, band.max);
+            energy += spectrum[i] * barkWeight;
+            count++;
+        }
+        
+        result[band.name] = count > 0 ? energy / count : 0;
+    }
+    
+    return result;
+}
+
+// Compute Bark-scale weighting within a band
+function computeBarkWeight(freq, bandMin, bandMax) {
+    // Convert Hz to Bark scale
+    const freqBark = hzToBark(freq);
+    const minBark = hzToBark(bandMin);
+    const maxBark = hzToBark(bandMax);
+    
+    // Triangular weighting centered in the band
+    const centerBark = (minBark + maxBark) / 2;
+    const bandwidth = maxBark - minBark;
+    
+    if (bandwidth === 0) return 1;
+    
+    const distance = Math.abs(freqBark - centerBark);
+    const weight = Math.max(0, 1 - (distance / (bandwidth / 2)));
+    
+    return weight;
+}
+
+// Convert Hz to Bark scale
+function hzToBark(hz) {
+    // Traunmüller's formula
+    return 26.81 * hz / (1960 + hz) - 0.53;
+}
+
+// Helper: Compute median
+function median(arr) {
+    if (arr.length === 0) return 0;
+    const sorted = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0 
+        ? (sorted[mid - 1] + sorted[mid]) / 2 
+        : sorted[mid];
+}
+        
+        // === BPM DETECTION ===
+        function computeOnsetEnvelope(data, sampleRate) {
+            const hopSize = 512;
+            const envelope = [];
+            let prevEnergy = 0;
+            for (let i = 0; i < data.length - hopSize; i += hopSize) {
+                let energy = 0;
+                for (let j = 0; j < hopSize; j++) {
+                    energy += data[i + j] * data[i + j];
+                }
+                envelope.push(Math.max(0, energy - prevEnergy));
+                prevEnergy = energy;
+            }
+            return envelope;
+        }
+        
+        function detectBPMFromPeaks(data, sampleRate) {
+            const hopSize = 512;
+            const peaks = [];
+            const energyEnvelope = [];
+            
+            for (let i = 0; i < data.length - hopSize; i += hopSize) {
+                let energy = 0;
+                for (let j = 0; j < hopSize; j++) {
+                    energy += data[i + j] * data[i + j];
+                }
+                energyEnvelope.push(Math.sqrt(energy / hopSize));
+            }
+            
+            const smoothed = [];
+            const smoothWindow = 3;
+            for (let i = 0; i < energyEnvelope.length; i++) {
+                let sum = 0, count = 0;
+                for (let j = Math.max(0, i - smoothWindow); j <= Math.min(energyEnvelope.length - 1, i + smoothWindow); j++) {
+                    sum += energyEnvelope[j];
+                    count++;
+                }
+                smoothed.push(sum / count);
+            }
+            
+            const mean = smoothed.reduce((a, b) => a + b) / smoothed.length;
+            const stdDev = Math.sqrt(smoothed.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / smoothed.length);
+            const threshold = mean + stdDev * 0.5;
+            const minPeakDistance = Math.floor(sampleRate / hopSize * 0.25);
+            
+            for (let i = 1; i < smoothed.length - 1; i++) {
+                if (smoothed[i] > threshold && smoothed[i] > smoothed[i - 1] && smoothed[i] > smoothed[i + 1]) {
+                    if (peaks.length === 0 || i - peaks[peaks.length - 1] >= minPeakDistance) {
+                        peaks.push(i);
+                    }
+                }
+            }
+            
+            if (peaks.length < 4) return { bpm: 120, confidence: 'low' };
+            
+            const intervals = [];
+            for (let i = 1; i < Math.min(peaks.length, 50); i++) {
+                intervals.push(peaks[i] - peaks[i - 1]);
+            }
+            
+            const intervalCounts = {};
+            intervals.forEach(interval => {
+                const rounded = Math.round(interval / 5) * 5;
+                intervalCounts[rounded] = (intervalCounts[rounded] || 0) + 1;
+            });
+            
+            let mostCommonInterval = 0, maxCount = 0;
+            for (const [interval, count] of Object.entries(intervalCounts)) {
+                if (count > maxCount) {
+                    maxCount = count;
+                    mostCommonInterval = parseInt(interval);
+                }
+            }
+            
+            const secondsPerBeat = (mostCommonInterval * hopSize) / sampleRate;
+            const bpm = Math.round(60 / secondsPerBeat);
+            const consistency = maxCount / intervals.length;
+            const confidence = consistency > 0.5 ? 'high' : consistency > 0.3 ? 'medium' : 'low';
+            
+            return { bpm: Math.max(40, Math.min(200, bpm)), confidence };
+        }
+        
+        function detectBPMAutocorr(data, sampleRate) {
+            const onsetEnvelope = computeOnsetEnvelope(data, sampleRate);
+            const downsampleFactor = 100;
+            const downsampled = [];
+            for (let i = 0; i < onsetEnvelope.length; i += downsampleFactor) {
+                downsampled.push(onsetEnvelope[i]);
+            }
+            
+            if (downsampled.length < 100) return { bpm: 120, confidence: 'low' };
+            
+            const minLag = Math.floor((60 / 180) * (sampleRate / (512 * downsampleFactor)));
+            const maxLag = Math.floor((60 / 50) * (sampleRate / (512 * downsampleFactor)));
+            let maxCorr = -Infinity, bestLag = minLag;
+            
+            for (let lag = minLag; lag < Math.min(maxLag, downsampled.length / 2); lag++) {
+                let corr = 0, norm1 = 0, norm2 = 0;
+                for (let i = 0; i < downsampled.length - lag; i++) {
+                    corr += downsampled[i] * downsampled[i + lag];
+                    norm1 += downsampled[i] * downsampled[i];
+                    norm2 += downsampled[i + lag] * downsampled[i + lag];
+                }
+                const normalizedCorr = corr / (Math.sqrt(norm1 * norm2) + 0.0001);
+                if (normalizedCorr > maxCorr) {
+                    maxCorr = normalizedCorr;
+                    bestLag = lag;
+                }
+            }
+            
+            const bpm = Math.round((60 * (sampleRate / (512 * downsampleFactor))) / bestLag);
+            const confidence = maxCorr > 0.5 ? 'high' : maxCorr > 0.3 ? 'medium' : 'low';
+            return { bpm: Math.max(40, Math.min(200, bpm)), confidence };
+        }
+        
+        function detectBPMComb(data, sampleRate) {
+            const onsetEnvelope = computeOnsetEnvelope(data, sampleRate);
+            if (onsetEnvelope.length < 100) return { bpm: 120, confidence: 'low' };
+            
+            const hopSize = 512;
+            const hopRate = sampleRate / hopSize;
+            let maxScore = 0, bestBPM = 120;
+            
+            for (let testBPM = 60; testBPM <= 180; testBPM++) {
+                const beatPeriod = (60 / testBPM) * hopRate;
+                let score = 0, numBeats = 0;
+                for (let beat = 0; beat * beatPeriod < onsetEnvelope.length; beat++) {
+                    const idx = Math.round(beat * beatPeriod);
+                    if (idx < onsetEnvelope.length) {
+                        score += onsetEnvelope[idx];
+                        numBeats++;
+                    }
+                }
+                score /= (numBeats + 1);
+                if (score > maxScore) {
+                    maxScore = score;
+                    bestBPM = testBPM;
+                }
+            }
+            
+            const avgEnergy = onsetEnvelope.reduce((a, b) => a + b, 0) / onsetEnvelope.length;
+            const relativeScore = maxScore / (avgEnergy + 0.0001);
+            const confidence = relativeScore > 1.5 ? 'high' : relativeScore > 1.2 ? 'medium' : 'low';
+            return { bpm: bestBPM, confidence };
+        }
+        
+        function pickBestBPM(candidates) {
+            const weights = { 'high': 3, 'medium': 2, 'low': 1 };
+            const agreementGroups = [];
+            
+            for (let i = 0; i < candidates.length; i++) {
+                const candidate = candidates[i];
+                let addedToGroup = false;
+                for (const group of agreementGroups) {
+                    const groupBPM = group[0].bpm;
+                    if (Math.abs(candidate.bpm - groupBPM) / groupBPM < 0.05 ||
+                        Math.abs(candidate.bpm - groupBPM * 2) / (groupBPM * 2) < 0.05 ||
+                        Math.abs(candidate.bpm - groupBPM / 2) / (groupBPM / 2) < 0.05) {
+                        group.push(candidate);
+                        addedToGroup = true;
+                        break;
+                    }
+                }
+                if (!addedToGroup) agreementGroups.push([candidate]);
+            }
+            
+            let bestGroup = agreementGroups[0], maxWeight = 0;
+            for (const group of agreementGroups) {
+                const totalWeight = group.reduce((sum, c) => sum + weights[c.confidence], 0);
+                if (totalWeight > maxWeight) {
+                    maxWeight = totalWeight;
+                    bestGroup = group;
+                }
+            }
+            bestGroup.sort((a, b) => weights[b.confidence] - weights[a.confidence]);
+            return bestGroup[0];
+        }
+        
+        function correctTempoMultiples(bpm) {
+            if (bpm > 170) return Math.round(bpm / 2);
+            if (bpm < 70) return Math.round(bpm * 2);
+            if (bpm >= 195 && bpm <= 205) return 100;
+            return bpm;
+        }
+        
+        async function detectBPMAutocorrelation(data, sampleRate, strategy) {
+    // Use strategy-aware analysis window
+    const bpmWindow = strategy.bpmWindow || 25;
+    const maxDuration = 45; // Analyze up to 45 seconds for better accuracy
+    const maxSamples = Math.min(data.length, sampleRate * maxDuration);
+    const analyzedData = data.slice(0, maxSamples);
+    
+    // Step 1: Compute enhanced onset strength envelope
+    const onsetEnvelope = computeEnhancedOnsetEnvelope(analyzedData, sampleRate);
+    
+    // Step 2: Run multiple complementary BPM detection methods
+    const methods = await Promise.all([
+        detectBPMEnhancedPeaks(onsetEnvelope, sampleRate),
+        detectBPMEnhancedAutocorr(onsetEnvelope, sampleRate),
+        detectBPMCombFilter(onsetEnvelope, sampleRate),
+        detectBPMSpectralPeriodicity(onsetEnvelope, sampleRate)
+    ]);
+    
+    // Step 3: Advanced tempo fusion with multiple validation checks
+    const fusedResult = fuseTempoEstimates(methods, analyzedData, sampleRate);
+    
+    // Step 4: Validate and correct common errors
+    const validatedBPM = validateAndCorrectTempo(fusedResult, methods);
+    
+    return validatedBPM;
+}
+
+// Enhanced onset envelope with spectral flux and energy
+function computeEnhancedOnsetEnvelope(data, sampleRate) {
+    const hopSize = 512;
+    const envelope = [];
+    let prevSpectrum = null;
+    let prevEnergy = 0;
+    
+    for (let i = 0; i < data.length - hopSize; i += hopSize) {
+        const segment = data.slice(i, i + hopSize);
+        const spectrum = computePowerSpectrum(segment);
+        
+        // Compute energy
+        let energy = 0;
+        for (let j = 0; j < segment.length; j++) {
+            energy += segment[j] * segment[j];
+        }
+        energy = Math.sqrt(energy / segment.length);
+        
+        // Compute spectral flux (change in spectrum)
+        let flux = 0;
+        if (prevSpectrum) {
+            for (let j = 0; j < Math.min(spectrum.length, prevSpectrum.length); j++) {
+                const diff = spectrum[j] - prevSpectrum[j];
+                flux += Math.max(0, diff); // Half-wave rectification
+            }
+        }
+        
+        // Compute energy change
+        const energyDiff = Math.max(0, energy - prevEnergy);
+        
+        // Combined onset strength (weighted)
+        const onsetStrength = flux * 0.7 + energyDiff * 100 * 0.3;
+        envelope.push(onsetStrength);
+        
+        prevSpectrum = spectrum;
+        prevEnergy = energy;
+    }
+    
+    // Apply median filtering to remove noise
+    return medianFilter(envelope, 3);
+}
+
+// Enhanced peak-based detection with adaptive thresholding
+function detectBPMEnhancedPeaks(envelope, sampleRate) {
+    const hopSize = 512;
+    const hopRate = sampleRate / hopSize;
+    
+    // Adaptive threshold based on envelope statistics
+    const sorted = [...envelope].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const q75 = sorted[Math.floor(sorted.length * 0.75)];
+    const threshold = median + (q75 - median) * 0.8;
+    
+    // Find peaks with adaptive spacing
+    const peaks = [];
+    const minPeakDistance = Math.floor(hopRate * 0.2); // Min 200ms between peaks
+    
+    for (let i = 2; i < envelope.length - 2; i++) {
+        if (envelope[i] > threshold &&
+            envelope[i] > envelope[i - 1] &&
+            envelope[i] > envelope[i + 1] &&
+            envelope[i] > envelope[i - 2] &&
+            envelope[i] > envelope[i + 2]) {
+            
+            if (peaks.length === 0 || i - peaks[peaks.length - 1] >= minPeakDistance) {
+                peaks.push(i);
+            }
+        }
+    }
+    
+    if (peaks.length < 8) {
+        return { bpm: 120, confidence: 'low', method: 'peaks', strength: 0 };
+    }
+    
+    // Compute inter-onset intervals
+    const intervals = [];
+    for (let i = 1; i < Math.min(peaks.length, 100); i++) {
+        intervals.push(peaks[i] - peaks[i - 1]);
+    }
+    
+    // Cluster intervals using histogram
+    const histogram = {};
+    for (const interval of intervals) {
+        const bucket = Math.round(interval / 3) * 3; // 3-frame buckets
+        histogram[bucket] = (histogram[bucket] || 0) + 1;
+    }
+    
+    // Find dominant interval
+    let maxCount = 0;
+    let dominantInterval = 0;
+    for (const [interval, count] of Object.entries(histogram)) {
+        if (count > maxCount) {
+            maxCount = count;
+            dominantInterval = parseInt(interval);
+        }
+    }
+    
+    const secondsPerBeat = (dominantInterval / hopRate);
+    const bpm = Math.round(60 / secondsPerBeat);
+    const consistency = maxCount / intervals.length;
+    
+    return {
+        bpm: Math.max(40, Math.min(200, bpm)),
+        confidence: consistency > 0.6 ? 'high' : consistency > 0.4 ? 'medium' : 'low',
+        method: 'peaks',
+        strength: consistency
+    };
+}
+
+// Enhanced autocorrelation with parabolic interpolation
+function detectBPMEnhancedAutocorr(envelope, sampleRate) {
+    const hopSize = 512;
+    const hopRate = sampleRate / hopSize;
+    
+    // Downsample for efficiency
+    const downsampleFactor = 4;
+    const downsampled = [];
+    for (let i = 0; i < envelope.length; i += downsampleFactor) {
+        downsampled.push(envelope[i]);
+    }
+    
+    if (downsampled.length < 100) {
+        return { bpm: 120, confidence: 'low', method: 'autocorr', strength: 0 };
+    }
+    
+    // Remove DC component
+    const mean = downsampled.reduce((a, b) => a + b, 0) / downsampled.length;
+    const normalized = downsampled.map(v => v - mean);
+    
+    // Compute autocorrelation
+    const minLag = Math.floor((60 / 200) * (hopRate / downsampleFactor)); // 200 BPM max
+    const maxLag = Math.floor((60 / 50) * (hopRate / downsampleFactor));  // 50 BPM min
+    
+    const correlations = [];
+    for (let lag = minLag; lag < Math.min(maxLag, normalized.length / 2); lag++) {
+        let corr = 0;
+        let norm1 = 0;
+        let norm2 = 0;
+        
+        for (let i = 0; i < normalized.length - lag; i++) {
+            corr += normalized[i] * normalized[i + lag];
+            norm1 += normalized[i] * normalized[i];
+            norm2 += normalized[i + lag] * normalized[i + lag];
+        }
+        
+        const normalizedCorr = corr / (Math.sqrt(norm1 * norm2) + 1e-10);
+        correlations.push({ lag, corr: normalizedCorr });
+    }
+    
+    // Find peak with parabolic interpolation
+    let maxCorr = -Infinity;
+    let bestLag = minLag;
+    let bestIdx = 0;
+    
+    for (let i = 1; i < correlations.length - 1; i++) {
+        if (correlations[i].corr > maxCorr &&
+            correlations[i].corr > correlations[i - 1].corr &&
+            correlations[i].corr > correlations[i + 1].corr) {
+            maxCorr = correlations[i].corr;
+            bestLag = correlations[i].lag;
+            bestIdx = i;
+        }
+    }
+    
+    // Parabolic interpolation for sub-sample accuracy
+    if (bestIdx > 0 && bestIdx < correlations.length - 1) {
+        const y1 = correlations[bestIdx - 1].corr;
+        const y2 = correlations[bestIdx].corr;
+        const y3 = correlations[bestIdx + 1].corr;
+        const offset = 0.5 * (y1 - y3) / (y1 - 2 * y2 + y3);
+        bestLag += offset;
+    }
+    
+    const bpm = Math.round((60 * hopRate) / (bestLag * downsampleFactor));
+    
+    return {
+        bpm: Math.max(40, Math.min(200, bpm)),
+        confidence: maxCorr > 0.6 ? 'high' : maxCorr > 0.4 ? 'medium' : 'low',
+        method: 'autocorr',
+        strength: Math.max(0, maxCorr)
+    };
+}
+
+// Comb filter resonance method
+function detectBPMCombFilter(envelope, sampleRate) {
+    const hopSize = 512;
+    const hopRate = sampleRate / hopSize;
+    
+    if (envelope.length < 100) {
+        return { bpm: 120, confidence: 'low', method: 'comb', strength: 0 };
+    }
+    
+    const scores = [];
+    
+    // Test tempo range with finer resolution
+    for (let testBPM = 60; testBPM <= 180; testBPM += 0.5) {
+        const beatPeriod = (60 / testBPM) * hopRate;
+        let score = 0;
+        let count = 0;
+        
+        // Sum envelope values at predicted beat positions
+        for (let beat = 0; beat * beatPeriod < envelope.length; beat++) {
+            const idx = Math.round(beat * beatPeriod);
+            if (idx < envelope.length) {
+                score += envelope[idx];
+                count++;
+            }
+        }
+        
+        score /= (count + 1);
+        scores.push({ bpm: testBPM, score });
+    }
+    
+    // Find best score
+    let bestScore = 0;
+    let bestBPM = 120;
+    for (const { bpm, score } of scores) {
+        if (score > bestScore) {
+            bestScore = score;
+            bestBPM = bpm;
+        }
+    }
+    
+    // Calculate relative strength
+    const avgScore = scores.reduce((sum, s) => sum + s.score, 0) / scores.length;
+    const relativeStrength = avgScore > 0 ? bestScore / avgScore : 1;
+    
+    return {
+        bpm: Math.round(bestBPM),
+        confidence: relativeStrength > 1.8 ? 'high' : relativeStrength > 1.4 ? 'medium' : 'low',
+        method: 'comb',
+        strength: Math.min(1, relativeStrength / 2)
+    };
+}
+
+// Spectral periodicity in tempo domain
+function detectBPMSpectralPeriodicity(envelope, sampleRate) {
+    const hopSize = 512;
+    const hopRate = sampleRate / hopSize;
+    
+    // Apply FFT to onset envelope to find periodicities
+    const fftSize = Math.pow(2, Math.ceil(Math.log2(envelope.length)));
+    const padded = new Float32Array(fftSize);
+    
+    // Apply window and copy
+    for (let i = 0; i < envelope.length; i++) {
+        const window = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (envelope.length - 1));
+        padded[i] = envelope[i] * window;
+    }
+    
+    const real = new Float32Array(padded);
+    const imag = new Float32Array(fftSize);
+    fft(real, imag);
+    
+    // Convert to power spectrum
+    const powerSpectrum = new Float32Array(fftSize / 2);
+    for (let i = 0; i < powerSpectrum.length; i++) {
+        powerSpectrum[i] = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
+    }
+    
+    // Find peak in tempo range (convert Hz to BPM)
+    const minBin = Math.floor((50 / 60) * fftSize / hopRate);  // 50 BPM
+    const maxBin = Math.floor((200 / 60) * fftSize / hopRate); // 200 BPM
+    
+    let maxPower = 0;
+    let bestBin = minBin;
+    
+    for (let i = minBin; i < Math.min(maxBin, powerSpectrum.length); i++) {
+        if (powerSpectrum[i] > maxPower) {
+            maxPower = powerSpectrum[i];
+            bestBin = i;
+        }
+    }
+    
+    const bpmFreq = (bestBin * hopRate) / fftSize;
+    const bpm = Math.round(bpmFreq * 60);
+    
+    // Strength based on peak prominence
+    const avgPower = powerSpectrum.slice(minBin, maxBin).reduce((a, b) => a + b, 0) / (maxBin - minBin);
+    const prominence = avgPower > 0 ? maxPower / avgPower : 1;
+    
+    return {
+        bpm: Math.max(40, Math.min(200, bpm)),
+        confidence: prominence > 3 ? 'high' : prominence > 2 ? 'medium' : 'low',
+        method: 'spectral',
+        strength: Math.min(1, prominence / 4)
+    };
+}
+
+// Advanced fusion of multiple estimates
+function fuseTempoEstimates(methods, data, sampleRate) {
+    // Weight each method by confidence
+    const weights = { 'high': 3, 'medium': 2, 'low': 1 };
+    
+    // Group similar estimates (allowing for octave errors)
+    const groups = [];
+    
+    for (const method of methods) {
+        let addedToGroup = false;
+        
+        for (const group of groups) {
+            const groupBPM = group.estimates[0].bpm;
+            
+            // Check if within 5% of tempo or its multiples/divisions
+            const ratios = [1, 2, 0.5, 3, 1/3, 4, 0.25];
+            for (const ratio of ratios) {
+                const targetBPM = groupBPM * ratio;
+                if (Math.abs(method.bpm - targetBPM) / targetBPM < 0.05) {
+                    group.estimates.push(method);
+                    group.totalWeight += weights[method.confidence] * method.strength;
+                    addedToGroup = true;
+                    break;
+                }
+            }
+            if (addedToGroup) break;
+        }
+        
+        if (!addedToGroup) {
+            groups.push({
+                estimates: [method],
+                totalWeight: weights[method.confidence] * method.strength
+            });
+        }
+    }
+    
+    // Find best group
+    let bestGroup = groups[0];
+    for (const group of groups) {
+        if (group.totalWeight > bestGroup.totalWeight) {
+            bestGroup = group;
+        }
+    }
+    
+    // Calculate weighted average within best group
+    let sumBPM = 0;
+    let sumWeight = 0;
+    
+    for (const est of bestGroup.estimates) {
+        const weight = weights[est.confidence] * est.strength;
+        sumBPM += est.bpm * weight;
+        sumWeight += weight;
+    }
+    
+    const avgBPM = sumWeight > 0 ? sumBPM / sumWeight : 120;
+    
+    // Determine final confidence based on agreement
+    const agreement = bestGroup.estimates.length;
+    const avgStrength = bestGroup.totalWeight / (agreement * 3); // Normalize by max possible weight
+    
+    let finalConfidence;
+    if (agreement >= 3 && avgStrength > 0.6) {
+        finalConfidence = 'high';
+    } else if (agreement >= 2 && avgStrength > 0.4) {
+        finalConfidence = 'medium';
+    } else {
+        finalConfidence = 'low';
+    }
+    
+    return {
+        bpm: Math.round(avgBPM),
+        confidence: finalConfidence,
+        agreement: agreement,
+        methods: bestGroup.estimates.map(e => e.method)
+    };
+}
+
+// Validate and correct common tempo errors
+function validateAndCorrectTempo(result, allMethods) {
+    let bpm = result.bpm;
+    
+    // Check for half-tempo error (most common)
+    if (bpm < 85) {
+        // Check if doubling would have strong support
+        const doubledSupport = allMethods.filter(m => 
+            Math.abs(m.bpm - bpm * 2) / (bpm * 2) < 0.05
+        ).length;
+        
+        if (doubledSupport >= 2) {
+            bpm = Math.round(bpm * 2);
+        }
+    }
+    
+    // Check for double-tempo error
+    if (bpm > 165) {
+        // Check if halving would have strong support
+        const halvedSupport = allMethods.filter(m => 
+            Math.abs(m.bpm - bpm / 2) / (bpm / 2) < 0.05
+        ).length;
+        
+        if (halvedSupport >= 2) {
+            bpm = Math.round(bpm / 2);
+        }
+    }
+    
+    // Check for triple-tempo error (less common but happens)
+    if (bpm > 195 && bpm < 210) {
+        // Likely 3x error of ~70 BPM
+        bpm = Math.round(bpm / 3);
+    }
+    
+    // Snap to common BPM values if very close and low confidence
+    if (result.confidence === 'low') {
+        const commonBPMs = [60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180];
+        for (const common of commonBPMs) {
+            if (Math.abs(bpm - common) <= 2) {
+                bpm = common;
+                break;
+            }
+        }
+    }
+    
+    return {
+        bpm: Math.max(40, Math.min(200, bpm)),
+        confidence: result.confidence
+    };
+}
+
+// Helper: Median filter for smoothing
+function medianFilter(data, windowSize) {
+    const filtered = [];
+    const halfWindow = Math.floor(windowSize / 2);
+    
+    for (let i = 0; i < data.length; i++) {
+        const window = [];
+        for (let j = Math.max(0, i - halfWindow); j <= Math.min(data.length - 1, i + halfWindow); j++) {
+            window.push(data[j]);
+        }
+        window.sort((a, b) => a - b);
+        filtered.push(window[Math.floor(window.length / 2)]);
+    }
+    
+    return filtered;
+}
+        
+        // === KEY DETECTION ===
+        function computeChromagram(data, sampleRate) {
+            const chroma = new Array(12).fill(0);
+            const segmentSize = 8192;
+            const numSegments = Math.min(20, Math.floor(data.length / segmentSize));
+            
+            for (let seg = 0; seg < numSegments; seg++) {
+                const start = seg * segmentSize;
+                const segment = data.slice(start, start + segmentSize);
+                const spectrum = computePowerSpectrum(segment);
+                
+                for (let i = 1; i < spectrum.length; i++) {
+                    const freq = (i / spectrum.length) * (sampleRate / 2);
+                    if (freq < 60 || freq > 4000) continue;
+                    
+                    const midiNote = 12 * Math.log2(freq / 440) + 69;
+                    const pitchClass = Math.round(midiNote) % 12;
+                    if (pitchClass >= 0 && pitchClass < 12) {
+                        chroma[pitchClass] += spectrum[i];
+                    }
+                }
+            }
+            
+            const total = chroma.reduce((sum, val) => sum + val, 0);
+            if (total > 0) {
+                for (let i = 0; i < 12; i++) chroma[i] /= total;
+            }
+            return chroma;
+        }
+        
+        async function detectKeyChromagram(data, sampleRate, strategy) {
+    // Use strategy-based segment count
+    const maxSegments = strategy.chromaSegments || 15;
+    const fftSize = strategy.fftSize || 8192;
+    
+    // Step 1: Compute time-series chromagram with multiple segments
+    const chromagrams = [];
+    const segmentSize = fftSize;
+    const hopSize = Math.floor(segmentSize / 2);
+    const numSegments = Math.min(maxSegments, Math.floor((data.length - segmentSize) / hopSize));
+    
+    for (let seg = 0; seg < numSegments; seg++) {
+        if (seg % 3 === 0) await yieldToMainThread();
+        
+        const start = seg * hopSize;
+        const segment = data.slice(start, start + segmentSize);
+        const chroma = computeChromaVector(segment, sampleRate, fftSize);
+        chromagrams.push(chroma);
+    }
+    
+    // Step 2: Compute median chromagram (more robust than mean)
+    const medianChroma = new Array(12).fill(0);
+    for (let pitch = 0; pitch < 12; pitch++) {
+        const values = chromagrams.map(c => c[pitch]).sort((a, b) => a - b);
+        const mid = Math.floor(values.length / 2);
+        medianChroma[pitch] = values.length % 2 === 0 
+            ? (values[mid - 1] + values[mid]) / 2 
+            : values[mid];
+    }
+    
+    // Normalize
+    const maxChroma = Math.max(...medianChroma);
+    if (maxChroma > 0) {
+        for (let i = 0; i < 12; i++) {
+            medianChroma[i] /= maxChroma;
+        }
+    }
+    
+    // Step 3: Enhanced key profiles (Krumhansl-Schmuckler with adjustments)
+    const majorProfile = [
+        6.35,  // C
+        2.23,  // C#
+        3.48,  // D
+        2.33,  // D#
+        4.38,  // E
+        4.09,  // F
+        2.52,  // F#
+        5.19,  // G
+        2.39,  // G#
+        3.66,  // A
+        2.29,  // A#
+        2.88   // B
+    ];
+    
+    const minorProfile = [
+        6.33,  // C
+        2.68,  // C#
+        3.52,  // D
+        5.38,  // D#
+        2.60,  // E
+        3.53,  // F
+        2.54,  // F#
+        4.75,  // G
+        3.98,  // G#
+        2.69,  // A
+        3.34,  // A#
+        3.17   // B
+    ];
+    
+    // Normalize profiles
+    const normalizProfile = (profile) => {
+        const sum = profile.reduce((a, b) => a + b, 0);
+        return profile.map(v => v / sum);
+    };
+    
+    const normMajor = normalizProfile(majorProfile);
+    const normMinor = normalizProfile(minorProfile);
+    
+    // Step 4: Compute correlation for all 24 keys (12 major + 12 minor)
+    const keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const candidates = [];
+    
+    for (let shift = 0; shift < 12; shift++) {
+        // Rotate chroma to test this root
+        const rotatedChroma = new Array(12);
+        for (let i = 0; i < 12; i++) {
+            rotatedChroma[i] = medianChroma[(i + shift) % 12];
+        }
+        
+        // Calculate Pearson correlation for major
+        const corrMajor = pearsonCorrelation(rotatedChroma, normMajor);
+        candidates.push({
+            key: keys[shift],
+            mode: 'major',
+            correlation: corrMajor,
+            chromaStrength: rotatedChroma[0] + rotatedChroma[4] + rotatedChroma[7] // I, III, V
+        });
+        
+        // Calculate Pearson correlation for minor
+        const corrMinor = pearsonCorrelation(rotatedChroma, normMinor);
+        candidates.push({
+            key: keys[shift],
+            mode: 'minor',
+            correlation: corrMinor,
+            chromaStrength: rotatedChroma[0] + rotatedChroma[3] + rotatedChroma[7] // I, bIII, V
+        });
+    }
+    
+    // Step 5: Sort by correlation and apply secondary criteria
+    candidates.sort((a, b) => {
+        // Primary: correlation score
+        if (Math.abs(b.correlation - a.correlation) > 0.05) {
+            return b.correlation - a.correlation;
+        }
+        // Secondary: triad strength
+        return b.chromaStrength - a.chromaStrength;
+    });
+    
+    const bestCandidate = candidates[0];
+    const secondBest = candidates[1];
+    
+    // Step 6: Confidence calculation
+    const correlationGap = bestCandidate.correlation - secondBest.correlation;
+    const absoluteStrength = bestCandidate.correlation;
+    
+    let confidence;
+    if (absoluteStrength > 0.7 && correlationGap > 0.15) {
+        confidence = 'high';
+    } else if (absoluteStrength > 0.5 && correlationGap > 0.08) {
+        confidence = 'medium';
+    } else {
+        confidence = 'low';
+    }
+    
+    // Step 7: Ambiguity check (relative keys often confused)
+    const relativeKey = findRelativeKey(bestCandidate.key, bestCandidate.mode);
+    const relativeCandidate = candidates.find(c => 
+        c.key === relativeKey.key && c.mode === relativeKey.mode
+    );
+    
+    if (relativeCandidate && 
+        Math.abs(bestCandidate.correlation - relativeCandidate.correlation) < 0.12) {
+        // Very close to relative key - reduce confidence
+        if (confidence === 'high') confidence = 'medium';
+        else if (confidence === 'medium') confidence = 'low';
+    }
+    
+    return {
+        key: bestCandidate.key,
+        mode: bestCandidate.mode,
+        confidence: confidence
+    };
+}
+
+// Helper: Compute chroma vector for a segment
+function computeChromaVector(segment, sampleRate, fftSize) {
+    const chroma = new Array(12).fill(0);
+    const spectrum = computePowerSpectrum(segment);
+    
+    // Focus on musical range (80 Hz to 4000 Hz)
+    const minBin = Math.floor((80 / (sampleRate / 2)) * spectrum.length);
+    const maxBin = Math.floor((4000 / (sampleRate / 2)) * spectrum.length);
+    
+    for (let i = minBin; i < Math.min(maxBin, spectrum.length); i++) {
+        const freq = (i / spectrum.length) * (sampleRate / 2);
+        const power = spectrum[i];
+        
+        // Convert frequency to MIDI note
+        const midiNote = 12 * Math.log2(freq / 440) + 69;
+        
+        // Weight by distance from exact semitone (reduce harmonic bleed)
+        const exactNote = Math.round(midiNote);
+        const distance = Math.abs(midiNote - exactNote);
+        const weight = Math.exp(-distance * distance * 10); // Gaussian weighting
+        
+        const pitchClass = exactNote % 12;
+        if (pitchClass >= 0 && pitchClass < 12) {
+            // Apply harmonic weighting (fundamentals weighted more than overtones)
+            const octave = Math.floor((exactNote - 12) / 12);
+            const harmonicWeight = Math.pow(0.7, Math.max(0, octave - 2));
+            
+            chroma[pitchClass] += power * weight * harmonicWeight;
+        }
+    }
+    
+    return chroma;
+}
+
+// Helper: Pearson correlation coefficient
+function pearsonCorrelation(x, y) {
+    const n = x.length;
+    const meanX = x.reduce((a, b) => a + b, 0) / n;
+    const meanY = y.reduce((a, b) => a + b, 0) / n;
+    
+    let numerator = 0;
+    let denomX = 0;
+    let denomY = 0;
+    
+    for (let i = 0; i < n; i++) {
+        const dx = x[i] - meanX;
+        const dy = y[i] - meanY;
+        numerator += dx * dy;
+        denomX += dx * dx;
+        denomY += dy * dy;
+    }
+    
+    const denom = Math.sqrt(denomX * denomY);
+    return denom > 0 ? numerator / denom : 0;
+}
+
+// Helper: Find relative major/minor key
+function findRelativeKey(key, mode) {
+    const keys = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const keyIndex = keys.indexOf(key);
+    
+    if (mode === 'major') {
+        // Relative minor is 3 semitones down (9 semitones up)
+        return {
+            key: keys[(keyIndex + 9) % 12],
+            mode: 'minor'
+        };
+    } else {
+        // Relative major is 3 semitones up
+        return {
+            key: keys[(keyIndex + 3) % 12],
+            mode: 'major'
+        };
+    }
+}
+        
+        // === ENERGY ANALYSIS ===
+        function computeEnergyMetrics(data, sampleRate) {
+    const segmentDuration = 0.4; // 400ms segments (EBU R128 standard)
+    const segmentSize = Math.floor(segmentDuration * sampleRate);
+    const hopSize = Math.floor(segmentSize / 4); // 75% overlap
+    
+    if (data.length < segmentSize) {
+        // Fallback for very short audio
+        return computeFallbackEnergy(data);
+    }
+    
+    // === STAGE 1: Compute momentary loudness for each segment ===
+    const momentaryLoudness = [];
+    const segmentRMS = [];
+    const segmentPeaks = [];
+    
+    for (let start = 0; start < data.length - segmentSize; start += hopSize) {
+        const segment = data.slice(start, start + segmentSize);
+        
+        // Apply K-weighting filter (simplified high-shelf for efficiency)
+        const weighted = applyKWeighting(segment, sampleRate);
+        
+        // Calculate mean square
+        let sumSquares = 0;
+        let peakValue = 0;
+        
+        for (let i = 0; i < weighted.length; i++) {
+            const sample = weighted[i];
+            sumSquares += sample * sample;
+            peakValue = Math.max(peakValue, Math.abs(sample));
+        }
+        
+        const meanSquare = sumSquares / weighted.length;
+        const rms = Math.sqrt(meanSquare);
+        
+        // Convert to LUFS (K-weighted)
+        const lufs = meanSquare > 1e-12 ? -0.691 + 10 * Math.log10(meanSquare) : -70;
+        
+        momentaryLoudness.push(lufs);
+        segmentRMS.push(rms);
+        segmentPeaks.push(peakValue);
+    }
+    
+    if (momentaryLoudness.length === 0) {
+        return computeFallbackEnergy(data);
+    }
+    
+    // === STAGE 2: Compute integrated loudness (gated) ===
+    // EBU R128 gating: -70 LUFS absolute, -10 LUFS relative
+    const absoluteThreshold = -70;
+    const relativeThreshold = -10;
+    
+    // First pass: mean above absolute threshold
+    const aboveAbsolute = momentaryLoudness.filter(l => l > absoluteThreshold);
+    
+    if (aboveAbsolute.length === 0) {
+        return computeFallbackEnergy(data);
+    }
+    
+    const meanAboveAbsolute = aboveAbsolute.reduce((a, b) => a + b, 0) / aboveAbsolute.length;
+    
+    // Second pass: mean above relative threshold
+    const relativeGate = meanAboveAbsolute + relativeThreshold;
+    const gatedLoudness = momentaryLoudness.filter(l => l > relativeGate);
+    
+    const integratedLUFS = gatedLoudness.length > 0
+        ? gatedLoudness.reduce((a, b) => a + b, 0) / gatedLoudness.length
+        : meanAboveAbsolute;
+    
+    // === STAGE 3: Short-term loudness (3 second window) ===
+    const shortTermWindow = Math.floor(3.0 / segmentDuration); // ~7-8 segments
+    const shortTermLoudness = [];
+    
+    for (let i = 0; i < momentaryLoudness.length - shortTermWindow; i++) {
+        const window = momentaryLoudness.slice(i, i + shortTermWindow);
+        const gated = window.filter(l => l > absoluteThreshold);
+        if (gated.length > 0) {
+            const avgLoudness = gated.reduce((a, b) => a + b, 0) / gated.length;
+            shortTermLoudness.push(avgLoudness);
+        }
+    }
+    
+    // === STAGE 4: Loudness range (LRA) ===
+    const sortedShortTerm = [...shortTermLoudness].sort((a, b) => a - b);
+    const lra = sortedShortTerm.length > 1
+        ? sortedShortTerm[Math.floor(sortedShortTerm.length * 0.95)] - 
+          sortedShortTerm[Math.floor(sortedShortTerm.length * 0.10)]
+        : 0;
+    
+    // === STAGE 5: Peak analysis ===
+    const truePeak = Math.max(...segmentPeaks);
+    const truePeakDBFS = truePeak > 0 ? 20 * Math.log10(truePeak) : -Infinity;
+    
+    // === STAGE 6: Crest factor and dynamic range ===
+    const medianRMS = [...segmentRMS].sort((a, b) => a - b)[Math.floor(segmentRMS.length / 2)];
+    const crestFactor = medianRMS > 0 && truePeak > 0 
+        ? 20 * Math.log10(truePeak / medianRMS) 
+        : 0;
+    
+    // Classify dynamic range based on crest factor and LRA
+    let drClassification;
+    if (crestFactor > 14 && lra > 10) {
+        drClassification = 'very-high'; // Classical, jazz, live recordings
+    } else if (crestFactor > 11 || lra > 7) {
+        drClassification = 'high'; // Rock, acoustic, well-produced pop
+    } else if (crestFactor > 8 || lra > 4) {
+        drClassification = 'moderate'; // Modern pop, most commercial music
+    } else if (crestFactor > 5 || lra > 2) {
+        drClassification = 'low'; // Heavily compressed EDM, modern hip-hop
+    } else {
+        drClassification = 'very-low'; // Brick-walled, extreme loudness war casualties
+    }
+    
+    // === STAGE 7: Compute normalized energy (0-1 scale) ===
+    // Map typical LUFS range (-40 to -5) to 0-1 scale
+    const normalizedEnergy = Math.max(0, Math.min(1, (integratedLUFS + 40) / 35));
+    
+    // Loudness (alternative mapping, more compressed)
+    const normalizedLoudness = Math.max(0, Math.min(1, (integratedLUFS + 30) / 25));
+    
+    // === STAGE 8: PLR (Peak to Loudness Ratio) for compression detection ===
+    const plr = truePeakDBFS - integratedLUFS;
+    
+    // Typical PLR values:
+    // Heavy compression: 5-10 dB
+    // Moderate: 10-15 dB
+    // Light: 15-20 dB
+    // Minimal: 20+ dB
+    
+    let compressionLevel;
+    if (plr < 8) {
+        compressionLevel = 'extreme';
+    } else if (plr < 12) {
+        compressionLevel = 'heavy';
+    } else if (plr < 16) {
+        compressionLevel = 'moderate';
+    } else if (plr < 20) {
+        compressionLevel = 'light';
+    } else {
+        compressionLevel = 'minimal';
+    }
+    
+    // === STAGE 9: Temporal dynamics ===
+    const loudnessVariance = computeVariance(shortTermLoudness);
+    const dynamicVariability = Math.min(1, loudnessVariance / 20); // Normalize to 0-1
+    
+    return {
+        energy: normalizedEnergy,
+        loudness: normalizedLoudness,
+        loudnessLUFS: integratedLUFS,
+        truePeakDBFS: truePeakDBFS,
+        loudnessRange: lra,
+        dynamicRange: {
+            crestFactor: Math.max(0, Math.min(30, crestFactor)),
+            peak: truePeak,
+            rms: medianRMS,
+            classification: drClassification,
+            plr: plr,
+            compressionLevel: compressionLevel
+        },
+        dynamicVariability: dynamicVariability,
+        // Additional metrics for analysis
+        isLoudnessWarVictim: integratedLUFS > -8 && crestFactor < 6,
+        hasMicroDynamics: lra > 5 && dynamicVariability > 0.3
+    };
+}
+
+// Apply K-weighting filter (simplified for efficiency)
+function applyKWeighting(data, sampleRate) {
+    // K-weighting consists of two stages:
+    // 1. High-shelf boost (+4 dB at high frequencies)
+    // 2. High-pass filter (cutoff ~38 Hz)
+    
+    // Simplified implementation using first-order filters
+    const weighted = new Float32Array(data.length);
+    
+    // High-pass filter (38 Hz, 6 dB/octave)
+    const hpfCutoff = 38;
+    const hpfRC = 1.0 / (2.0 * Math.PI * hpfCutoff);
+    const hpfDT = 1.0 / sampleRate;
+    const hpfAlpha = hpfRC / (hpfRC + hpfDT);
+    
+    let hpfPrevInput = 0;
+    let hpfPrevOutput = 0;
+    
+    for (let i = 0; i < data.length; i++) {
+        hpfPrevOutput = hpfAlpha * (hpfPrevOutput + data[i] - hpfPrevInput);
+        hpfPrevInput = data[i];
+        weighted[i] = hpfPrevOutput;
+    }
+    
+    // High-shelf boost (simplified +4 dB above 1 kHz)
+    const shelfFreq = 1000;
+    const shelfGain = 1.585; // ~4 dB
+    
+    for (let i = 0; i < weighted.length; i++) {
+        // Very simplified: just boost higher frequencies
+        // In production, would use proper biquad filter
+        weighted[i] *= (1.0 + (shelfGain - 1.0) * 0.3); // Approximate 30% contribution
+    }
+    
+    return weighted;
+}
+
+// Fallback for short audio
+function computeFallbackEnergy(data) {
+    let sumSquares = 0;
+    let peakAmplitude = 0;
+    
+    for (let i = 0; i < data.length; i++) {
+        sumSquares += data[i] * data[i];
+        peakAmplitude = Math.max(peakAmplitude, Math.abs(data[i]));
+    }
+    
+    const rms = Math.sqrt(sumSquares / data.length);
+    const loudnessLUFS = rms > 0.000001 ? Math.max(-70, 20 * Math.log10(rms)) : -70;
+    const energy = Math.max(0, Math.min(1, (loudnessLUFS + 30) / 20));
+    const crestFactor = rms > 0 && peakAmplitude > 0 ? 20 * Math.log10(peakAmplitude / rms) : 0;
+    
+    return {
+        energy: energy,
+        loudness: energy,
+        loudnessLUFS: loudnessLUFS,
+        truePeakDBFS: peakAmplitude > 0 ? 20 * Math.log10(peakAmplitude) : -Infinity,
+        loudnessRange: 0,
+        dynamicRange: {
+            crestFactor: Math.max(0, Math.min(30, crestFactor)),
+            peak: peakAmplitude,
+            rms: rms,
+            classification: 'moderate',
+            plr: 0,
+            compressionLevel: 'unknown'
+        },
+        dynamicVariability: 0,
+        isLoudnessWarVictim: false,
+        hasMicroDynamics: false
+    };
+}
+
+// Compute variance
+function computeVariance(arr) {
+    if (arr.length < 2) return 0;
+    const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+    const squaredDiffs = arr.map(x => (x - mean) * (x - mean));
+    return squaredDiffs.reduce((a, b) => a + b, 0) / arr.length;
+}
+        
+        // === RHYTHM ANALYSIS ===
+        async function detectOnsets(data, sampleRate) {
+    const hopSize = 512;
+    const hopRate = sampleRate / hopSize;
+    
+    // === STAGE 1: Compute multiple onset detection functions ===
+    const spectralFluxOnsets = [];
+    const energyOnsets = [];
+    const phaseOnsets = [];
+    const complexOnsets = [];
+    
+    let prevSpectrum = null;
+    let prevEnergy = 0;
+    let prevPhase = null;
+    
+    for (let i = 0; i < data.length - hopSize; i += hopSize) {
+        if (i % (hopSize * 10) === 0) await yieldToMainThread();
+        
+        const segment = data.slice(i, i + hopSize);
+        const spectrum = computePowerSpectrum(segment);
+        const phase = computePhaseSpectrum(segment);
+        
+        // Energy
+        let energy = 0;
+        for (let j = 0; j < segment.length; j++) {
+            energy += segment[j] * segment[j];
+        }
+        energy = Math.sqrt(energy / segment.length);
+        
+        if (prevSpectrum && prevPhase) {
+            // === Spectral Flux (Half-Wave Rectified) ===
+            let flux = 0;
+            for (let j = 0; j < Math.min(spectrum.length, prevSpectrum.length); j++) {
+                const diff = spectrum[j] - prevSpectrum[j];
+                flux += Math.max(0, diff); // HWR
+            }
+            spectralFluxOnsets.push(flux);
+            
+            // === Energy Onset (First-order difference) ===
+            const energyDiff = Math.max(0, energy - prevEnergy);
+            energyOnsets.push(energyDiff);
+            
+            // === Phase Deviation ===
+            let phaseDev = 0;
+            const numBins = Math.min(phase.length, prevPhase.length, spectrum.length);
+            
+            for (let j = 1; j < numBins; j++) {
+                // Expected phase advance
+                const expectedPhase = prevPhase[j] + (2 * Math.PI * j * hopSize / (hopSize * 2));
+                // Actual phase
+                const actualPhase = phase[j];
+                // Deviation
+                let deviation = actualPhase - expectedPhase;
+                // Wrap to [-π, π]
+                while (deviation > Math.PI) deviation -= 2 * Math.PI;
+                while (deviation < -Math.PI) deviation += 2 * Math.PI;
+                
+                // Weight by magnitude
+                phaseDev += Math.abs(deviation) * spectrum[j];
+            }
+            phaseOnsets.push(phaseDev);
+            
+            // === Complex Domain (magnitude + phase) ===
+            let complexDiff = 0;
+            for (let j = 0; j < numBins; j++) {
+                const magDiff = Math.abs(spectrum[j] - prevSpectrum[j]);
+                const phaseDiff = Math.abs(phase[j] - prevPhase[j]);
+                complexDiff += magDiff + phaseDiff * 0.3;
+            }
+            complexOnsets.push(complexDiff);
+        }
+        
+        prevSpectrum = spectrum;
+        prevEnergy = energy;
+        prevPhase = phase;
+    }
+    
+    if (spectralFluxOnsets.length < 10) {
+        return {
+            onsetRate: 0,
+            danceability: 0.3,
+            complexity: 'low',
+            groove: 0,
+            rhythmicRegularity: 0
+        };
+    }
+    
+    // === STAGE 2: Normalize and combine detection functions ===
+    const normalize = (arr) => {
+        const max = Math.max(...arr);
+        return max > 0 ? arr.map(v => v / max) : arr;
+    };
+    
+    const normFlux = normalize(spectralFluxOnsets);
+    const normEnergy = normalize(energyOnsets);
+    const normPhase = normalize(phaseOnsets);
+    const normComplex = normalize(complexOnsets);
+    
+    // Weighted combination (flux is most reliable)
+    const combinedODF = [];
+    for (let i = 0; i < normFlux.length; i++) {
+        combinedODF.push(
+            normFlux[i] * 0.45 +
+            normEnergy[i] * 0.25 +
+            normPhase[i] * 0.15 +
+            normComplex[i] * 0.15
+        );
+    }
+    
+    // === STAGE 3: Adaptive peak picking ===
+    const onsets = [];
+    
+    // Compute adaptive threshold using median + delta
+    const windowSize = Math.floor(hopRate * 0.1); // 100ms window
+    
+    for (let i = windowSize; i < combinedODF.length - windowSize; i++) {
+        const window = combinedODF.slice(i - windowSize, i + windowSize);
+        const median = [...window].sort((a, b) => a - b)[Math.floor(window.length / 2)];
+        const mean = window.reduce((a, b) => a + b, 0) / window.length;
+        const delta = mean - median;
+        const threshold = median + delta * 1.2;
+        
+        // Peak detection with threshold
+        if (combinedODF[i] > threshold &&
+            combinedODF[i] > combinedODF[i - 1] &&
+            combinedODF[i] > combinedODF[i + 1] &&
+            combinedODF[i] > combinedODF[i - 2] &&
+            combinedODF[i] > combinedODF[i + 2]) {
+            
+            // Minimum inter-onset interval (50ms)
+            if (onsets.length === 0 || i - onsets[onsets.length - 1].index > hopRate * 0.05) {
+                onsets.push({
+                    index: i,
+                    time: i / hopRate,
+                    strength: combinedODF[i]
+                });
+            }
+        }
+    }
+    
+    if (onsets.length < 4) {
+        return {
+            onsetRate: onsets.length / (data.length / sampleRate),
+            danceability: 0.2,
+            complexity: 'very-low',
+            groove: 0,
+            rhythmicRegularity: 0
+        };
+    }
+    
+    // === STAGE 4: Compute inter-onset intervals (IOIs) ===
+    const iois = [];
+    for (let i = 1; i < Math.min(onsets.length, 200); i++) {
+        iois.push(onsets[i].time - onsets[i - 1].time);
+    }
+    
+    // === STAGE 5: Rhythmic regularity ===
+    const medianIOI = [...iois].sort((a, b) => a - b)[Math.floor(iois.length / 2)];
+    const meanIOI = iois.reduce((a, b) => a + b, 0) / iois.length;
+    
+    let sumSquaredDiffs = 0;
+    for (const ioi of iois) {
+        sumSquaredDiffs += Math.pow(ioi - meanIOI, 2);
+    }
+    const stdDev = Math.sqrt(sumSquaredDiffs / iois.length);
+    const coefficientOfVariation = meanIOI > 0 ? stdDev / meanIOI : 1;
+    
+    // Regularity (inverse of variation)
+    const rhythmicRegularity = Math.max(0, Math.min(1, 1 - coefficientOfVariation));
+    
+    // === STAGE 6: Danceability (regularity + tempo appropriateness) ===
+    // Ideal dance tempo: 100-130 BPM
+    const estimatedTempo = 60 / medianIOI;
+    let tempoFactor = 0;
+    
+    if (estimatedTempo >= 90 && estimatedTempo <= 140) {
+        tempoFactor = 1.0;
+    } else if (estimatedTempo >= 70 && estimatedTempo <= 170) {
+        tempoFactor = 0.8;
+    } else if (estimatedTempo >= 50 && estimatedTempo <= 200) {
+        tempoFactor = 0.5;
+    } else {
+        tempoFactor = 0.3;
+    }
+    
+    const danceability = Math.max(0.1, Math.min(1.0,
+        rhythmicRegularity * 0.7 + tempoFactor * 0.3
+    ));
+    
+    // === STAGE 7: Groove/syncopation detection ===
+    // Measure how onsets relate to regular grid
+    const beatGrid = [];
+    const beatPeriod = medianIOI;
+    
+    for (let t = 0; t < data.length / sampleRate; t += beatPeriod) {
+        beatGrid.push(t);
+    }
+    
+    let totalDeviation = 0;
+    let nearGridCount = 0;
+    let offGridCount = 0;
+    
+    for (const onset of onsets) {
+        // Find nearest beat in grid
+        let minDist = Infinity;
+        for (const beat of beatGrid) {
+            const dist = Math.abs(onset.time - beat);
+            minDist = Math.min(minDist, dist);
+        }
+        
+        totalDeviation += minDist;
+        
+        if (minDist < beatPeriod * 0.1) {
+            nearGridCount++;
+        } else if (minDist > beatPeriod * 0.2 && minDist < beatPeriod * 0.8) {
+            offGridCount++; // Syncopation
+        }
+    }
+    
+    const avgDeviation = totalDeviation / onsets.length;
+    const syncopation = offGridCount / onsets.length;
+    
+    // Groove: some syncopation is good, too much is chaos
+    const groove = Math.max(0, Math.min(1,
+        syncopation * 3 * (1 - coefficientOfVariation) // Syncopated but regular
+    ));
+    
+    // === STAGE 8: Complexity classification ===
+    let complexity;
+    if (coefficientOfVariation > 0.7 || syncopation > 0.5) {
+        complexity = 'very-high';
+    } else if (coefficientOfVariation > 0.5 || syncopation > 0.35) {
+        complexity = 'high';
+    } else if (coefficientOfVariation > 0.3 || syncopation > 0.2) {
+        complexity = 'medium';
+    } else if (coefficientOfVariation > 0.15) {
+        complexity = 'low';
+    } else {
+        complexity = 'very-low';
+    }
+    
+    // === STAGE 9: Onset rate ===
+    const onsetRate = onsets.length / (data.length / sampleRate);
+    
+    return {
+        onsetRate: onsetRate,
+        danceability: danceability,
+        complexity: complexity,
+        groove: groove,
+        rhythmicRegularity: rhythmicRegularity,
+        syncopation: syncopation,
+        estimatedTempo: estimatedTempo
+    };
+}
+
+// Compute phase spectrum
+function computePhaseSpectrum(signal) {
+    const fftSize = Math.pow(2, Math.ceil(Math.log2(signal.length)));
+    const padded = new Float32Array(fftSize);
+    
+    // Apply window and copy
+    for (let i = 0; i < signal.length; i++) {
+        const window = 0.54 - 0.46 * Math.cos(2 * Math.PI * i / (signal.length - 1));
+        padded[i] = signal[i] * window;
+    }
+    
+    const real = new Float32Array(padded);
+    const imag = new Float32Array(fftSize);
+    fft(real, imag);
+    
+    // Compute phase (only need first half)
+    const phase = new Float32Array(fftSize / 2);
+    for (let i = 0; i < phase.length; i++) {
+        phase[i] = Math.atan2(imag[i], real[i]);
+    }
+    
+    return phase;
+}
+        
+        function computeZeroCrossingRate(data) {
+            let crossings = 0;
+            for (let i = 1; i < data.length; i++) {
+                if ((data[i] >= 0 && data[i - 1] < 0) || (data[i] < 0 && data[i - 1] >= 0)) {
+                    crossings++;
+                }
+            }
+            return crossings / data.length;
+        }
+        
+        // === ADVANCED FEATURES ===
+        function computeSpeechiness(spectralFeatures, zcr) {
+            const voiceRangeFactor = spectralFeatures.spectralCentroid >= 1000 && 
+                                    spectralFeatures.spectralCentroid <= 3000 ? 1.0 : 0.5;
+            const presenceFactor = Math.min(1, spectralFeatures.frequencyBands.presence * 5);
+            const lowBassFactor = 1 - Math.min(1, spectralFeatures.frequencyBands.bass * 4);
+            const zcrFactor = Math.min(1, zcr * 80);
+            return Math.max(0, Math.min(1, voiceRangeFactor * 0.3 + presenceFactor * 0.3 + lowBassFactor * 0.2 + zcrFactor * 0.2));
+        }
+        
+        function computeAcousticness(spectralFeatures, energyAnalysis) {
+            const midRatio = spectralFeatures.frequencyBands.midrange / 
+                           (spectralFeatures.frequencyBands.bass + spectralFeatures.frequencyBands.brilliance + 0.001);
+            const dynamicFactor = energyAnalysis.dynamicRange.crestFactor / 20;
+            return Math.max(0, Math.min(1, (midRatio * 0.6 + dynamicFactor * 0.4)));
+        }
+        
+        function computeValence(bpm, energy, spectralCentroid, keyResult, dynamicRange) {
+            const bpmFactor = Math.max(0, Math.min(1, (bpm - 60) / 140));
+            const brightnessFactor = Math.max(0, Math.min(1, (spectralCentroid - 1000) / 2000));
+            const keyMoodFactor = keyResult.mode === 'major' ? 0.65 : 0.35;
+            const dynamicFactor = Math.max(0, Math.min(1, dynamicRange.crestFactor / 15));
+            return Math.max(0, Math.min(1, bpmFactor * 0.2 + energy * 0.25 + brightnessFactor * 0.15 + keyMoodFactor * 0.3 + dynamicFactor * 0.1));
+        }
+        
+        // === GENRE & MOOD ===
+        function classifyGenre(features) {
+    // Define genre profiles with weighted feature ranges
+    const genreProfiles = {
+        'Electronic/Dance': {
+            bpm: { min: 115, ideal: 128, max: 145, weight: 0.25 },
+            energy: { min: 0.60, ideal: 0.80, max: 1.0, weight: 0.20 },
+            danceability: { min: 0.65, ideal: 0.85, max: 1.0, weight: 0.20 },
+            bassEnergy: { min: 0.20, ideal: 0.28, max: 0.40, weight: 0.15 },
+            spectralCentroid: { min: 1800, ideal: 2400, max: 3500, weight: 0.10 },
+            valence: { min: 0.40, ideal: 0.65, max: 1.0, weight: 0.10 }
+        },
+        'Hip-Hop/Rap': {
+            bpm: { min: 70, ideal: 95, max: 120, weight: 0.20 },
+            bassEnergy: { min: 0.25, ideal: 0.32, max: 0.45, weight: 0.30 },
+            energy: { min: 0.45, ideal: 0.65, max: 0.85, weight: 0.15 },
+            spectralCentroid: { min: 800, ideal: 1500, max: 2000, weight: 0.15 },
+            danceability: { min: 0.45, ideal: 0.65, max: 0.85, weight: 0.15 },
+            valence: { min: 0.30, ideal: 0.55, max: 0.80, weight: 0.05 }
+        },
+        'Rock': {
+            bpm: { min: 95, ideal: 130, max: 170, weight: 0.20 },
+            energy: { min: 0.50, ideal: 0.70, max: 0.90, weight: 0.25 },
+            spectralCentroid: { min: 1400, ideal: 2000, max: 3000, weight: 0.20 },
+            bassEnergy: { min: 0.14, ideal: 0.20, max: 0.28, weight: 0.15 },
+            danceability: { min: 0.30, ideal: 0.50, max: 0.70, weight: 0.15 },
+            valence: { min: 0.35, ideal: 0.55, max: 0.75, weight: 0.05 }
+        },
+        'Metal': {
+            bpm: { min: 120, ideal: 160, max: 220, weight: 0.20 },
+            energy: { min: 0.75, ideal: 0.90, max: 1.0, weight: 0.30 },
+            spectralCentroid: { min: 2200, ideal: 3000, max: 4500, weight: 0.20 },
+            bassEnergy: { min: 0.18, ideal: 0.25, max: 0.35, weight: 0.15 },
+            danceability: { min: 0.15, ideal: 0.35, max: 0.55, weight: 0.10 },
+            valence: { min: 0.15, ideal: 0.35, max: 0.60, weight: 0.05 }
+        },
+        'Pop': {
+            bpm: { min: 95, ideal: 118, max: 140, weight: 0.20 },
+            danceability: { min: 0.50, ideal: 0.70, max: 0.90, weight: 0.25 },
+            energy: { min: 0.50, ideal: 0.68, max: 0.85, weight: 0.20 },
+            valence: { min: 0.45, ideal: 0.65, max: 0.90, weight: 0.15 },
+            spectralCentroid: { min: 1500, ideal: 1900, max: 2400, weight: 0.15 },
+            bassEnergy: { min: 0.15, ideal: 0.22, max: 0.30, weight: 0.05 }
+        },
+        'R&B/Soul': {
+            bpm: { min: 65, ideal: 90, max: 115, weight: 0.20 },
+            danceability: { min: 0.45, ideal: 0.65, max: 0.80, weight: 0.20 },
+            energy: { min: 0.35, ideal: 0.55, max: 0.75, weight: 0.15 },
+            bassEnergy: { min: 0.18, ideal: 0.24, max: 0.32, weight: 0.20 },
+            valence: { min: 0.30, ideal: 0.50, max: 0.70, weight: 0.15 },
+            spectralCentroid: { min: 1200, ideal: 1700, max: 2300, weight: 0.10 }
+        },
+        'Jazz': {
+            bpm: { min: 80, ideal: 140, max: 200, weight: 0.15 },
+            spectralCentroid: { min: 1500, ideal: 2000, max: 2600, weight: 0.25 },
+            danceability: { min: 0.25, ideal: 0.45, max: 0.60, weight: 0.20 },
+            energy: { min: 0.35, ideal: 0.55, max: 0.75, weight: 0.15 },
+            bassEnergy: { min: 0.08, ideal: 0.15, max: 0.22, weight: 0.15 },
+            valence: { min: 0.35, ideal: 0.55, max: 0.75, weight: 0.10 }
+        },
+        'Classical': {
+            bpm: { min: 50, ideal: 100, max: 160, weight: 0.10 },
+            spectralCentroid: { min: 1800, ideal: 2500, max: 3500, weight: 0.25 },
+            danceability: { min: 0.10, ideal: 0.25, max: 0.40, weight: 0.25 },
+            energy: { min: 0.20, ideal: 0.45, max: 0.65, weight: 0.20 },
+            bassEnergy: { min: 0.05, ideal: 0.12, max: 0.20, weight: 0.15 },
+            valence: { min: 0.30, ideal: 0.50, max: 0.70, weight: 0.05 }
+        },
+        'Country': {
+            bpm: { min: 85, ideal: 110, max: 140, weight: 0.20 },
+            energy: { min: 0.40, ideal: 0.58, max: 0.75, weight: 0.20 },
+            spectralCentroid: { min: 1300, ideal: 1750, max: 2300, weight: 0.20 },
+            danceability: { min: 0.35, ideal: 0.52, max: 0.70, weight: 0.15 },
+            valence: { min: 0.40, ideal: 0.58, max: 0.80, weight: 0.15 },
+            bassEnergy: { min: 0.12, ideal: 0.18, max: 0.26, weight: 0.10 }
+        },
+        'Ambient': {
+            bpm: { min: 40, ideal: 75, max: 110, weight: 0.15 },
+            energy: { min: 0.10, ideal: 0.25, max: 0.45, weight: 0.30 },
+            danceability: { min: 0.05, ideal: 0.20, max: 0.35, weight: 0.25 },
+            valence: { min: 0.20, ideal: 0.40, max: 0.60, weight: 0.10 },
+            spectralCentroid: { min: 1000, ideal: 1800, max: 3000, weight: 0.15 },
+            bassEnergy: { min: 0.08, ideal: 0.15, max: 0.25, weight: 0.05 }
+        }
+    };
+
+    // Calculate Gaussian-like score for each feature
+    function calculateFeatureScore(value, profile) {
+        const { min, ideal, max } = profile;
+        
+        // Out of range = 0 score
+        if (value < min || value > max) return 0;
+        
+        // Calculate distance from ideal (normalized)
+        if (value <= ideal) {
+            // Left side of bell curve
+            const range = ideal - min;
+            if (range === 0) return 1;
+            const distance = (value - min) / range;
+            return distance * distance; // Quadratic falloff
+        } else {
+            // Right side of bell curve
+            const range = max - ideal;
+            if (range === 0) return 1;
+            const distance = (max - value) / range;
+            return distance * distance; // Quadratic falloff
+        }
+    }
+
+    // Score each genre
+    const genreScores = {};
+    
+    for (const [genre, profile] of Object.entries(genreProfiles)) {
+        let totalScore = 0;
+        let totalWeight = 0;
+        
+        for (const [feature, params] of Object.entries(profile)) {
+            const featureValue = features[feature];
+            if (featureValue !== undefined && featureValue !== null) {
+                const score = calculateFeatureScore(featureValue, params);
+                totalScore += score * params.weight;
+                totalWeight += params.weight;
+            }
+        }
+        
+        // Normalize to 0-100 scale
+        genreScores[genre] = totalWeight > 0 ? (totalScore / totalWeight) * 100 : 0;
+    }
+
+    // Find best match
+    let bestGenre = null;
+    let bestScore = 0;
+    let secondBestScore = 0;
+    
+    for (const [genre, score] of Object.entries(genreScores)) {
+        if (score > bestScore) {
+            secondBestScore = bestScore;
+            bestScore = score;
+            bestGenre = genre;
+        } else if (score > secondBestScore) {
+            secondBestScore = score;
+        }
+    }
+
+    // Require minimum confidence (score >= 35) and clear winner (15% margin)
+    const marginRequired = bestScore * 0.15;
+    if (bestScore < 35 || (bestScore - secondBestScore) < marginRequired) {
+        // Fallback to simple heuristics for ambiguous cases
+        if (features.energy > 0.75 && features.bpm > 125) return 'Electronic/Dance';
+        if (features.bassEnergy > 0.28) return 'Hip-Hop/Rap';
+        if (features.energy < 0.35 && features.danceability < 0.35) return 'Ambient';
+        if (features.danceability > 0.65 && features.valence > 0.55) return 'Pop';
+        return 'Pop'; // Ultimate fallback
+    }
+    
+    return bestGenre;
+}
+        
+        function detectMoodAdvanced(energy, valence, bpm) {
+            if (energy > 0.6) return valence > 0.5 ? 'Energetic' : 'Dark';
+            if (energy < 0.4) return valence > 0.5 ? 'Calm' : 'Dark';
+            if (valence > 0.55) return 'Bright';
+            if (valence < 0.45) return 'Dark';
+            return 'Neutral';
+        }
+        
+        function classifyTempo(bpm) {
+            if (bpm < 80) return 'slow';
+            if (bpm < 110) return 'moderate';
+            if (bpm < 140) return 'fast';
+            return 'very-fast';
+        }
+        
+        function detectVintage(spectralCentroid, crestFactor, frequencyBands) {
+            let vintageScore = 0;
+            if (spectralCentroid < 1500) vintageScore += 2;
+            if (crestFactor > 12) vintageScore += 2;
+            if (frequencyBands.subBass < 0.08) vintageScore += 1;
+            if (frequencyBands.brilliance < 0.12) vintageScore += 1;
+            return vintageScore >= 3;
+        }
+    `;
+}
+        
+        // ============================================================================
+        // INITIALIZE APPLICATION
+        // ============================================================================
+        
+        let app;
+        window.addEventListener('load', () => {
+            app = new IntegratedMusicAnalyzer();
+        });
+    </script>
+</body>
+</html>

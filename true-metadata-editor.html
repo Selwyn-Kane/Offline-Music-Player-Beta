@@ -1,0 +1,1738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Metadata Batch Editor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+            background-color: #000;
+            color: #ddd;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 20px;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+            font-size: 2em;
+            color: #fff;
+            text-shadow: 0 0 20px rgba(220, 53, 69, 0.5);
+        }
+
+        #drop-zone {
+            width: 90%;
+            max-width: 800px;
+            min-height: 200px;
+            border: 3px dashed #dc3545;
+            border-radius: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 30px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            padding: 40px;
+        }
+
+        #drop-zone:hover {
+            border-color: #ff7788;
+            background: linear-gradient(135deg, #2d2d2d 0%, #1a1a1a 100%);
+            transform: scale(1.02);
+        }
+
+        #drop-zone.drag-over {
+            border-color: #28a745;
+            background: rgba(40, 167, 69, 0.1);
+        }
+
+        .drop-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+            color: #dc3545;
+        }
+
+        .drop-text {
+            font-size: 1.3em;
+            color: #fff;
+            margin-bottom: 10px;
+        }
+
+        .drop-subtext {
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        button {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+            font-weight: 600;
+            box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(220, 53, 69, 0.5);
+        }
+
+        button:disabled {
+            background: linear-gradient(135deg, #555 0%, #444 100%);
+            cursor: not-allowed;
+            opacity: 0.5;
+            box-shadow: none;
+        }
+
+        button.success {
+            background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+        }
+
+        #controls {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        #file-list {
+            width: 90%;
+            max-width: 1200px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 32px rgba(220, 53, 69, 0.2);
+            border: 1px solid #333;
+            margin-bottom: 30px;
+        }
+
+        .file-list-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #dc3545;
+        }
+
+        .file-list-header h2 {
+            color: #fff;
+            font-size: 1.5em;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        .stat {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .file-item {
+            display: grid;
+            grid-template-columns: 80px 1fr auto auto;
+            gap: 20px;
+            align-items: center;
+            padding: 15px;
+            background: #222;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            border: 2px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .file-item:hover {
+            border-color: #dc3545;
+            background: #2a2a2a;
+        }
+
+        .file-item.edited {
+            border-color: #ffc107;
+            background: rgba(255, 193, 7, 0.05);
+        }
+
+        .file-art {
+            width: 80px;
+            height: 80px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #1a1a1a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            position: relative;
+        }
+
+        .file-art img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .file-art-placeholder {
+            font-size: 2em;
+            color: #444;
+        }
+
+        .file-art-upload {
+            position: absolute;
+            bottom: 5px;
+            right: 5px;
+            background: rgba(220, 53, 69, 0.9);
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 0.7em;
+            color: white;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .file-art:hover .file-art-upload {
+            opacity: 1;
+        }
+
+
+        .file-metadata {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .metadata-field {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .metadata-field label {
+            color: #888;
+            font-size: 0.75em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .metadata-field input {
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: #fff;
+            font-size: 0.95em;
+            transition: all 0.3s ease;
+        }
+
+        .metadata-field input:focus {
+            outline: none;
+            border-color: #dc3545;
+            box-shadow: 0 0 10px rgba(220, 53, 69, 0.3);
+        }
+
+        .metadata-field input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .file-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .action-btn {
+            padding: 8px 12px;
+            font-size: 12px;
+            min-width: 80px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.7em;
+            font-weight: 700;
+            text-transform: uppercase;
+            margin-top: 8px;
+        }
+
+        .badge-edited {
+            background: #ffc107;
+            color: #000;
+        }
+
+        .badge-no-metadata {
+            background: #dc3545;
+            color: #fff;
+        }
+
+        .badge-metadata {
+            background: #28a745;
+            color: #fff;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px;
+            color: #666;
+            font-style: italic;
+        }
+
+        #progress-container {
+            width: 90%;
+            max-width: 800px;
+            background: #1a1a1a;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 30px;
+            display: none;
+        }
+
+        #progress-container.show {
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #222;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 15px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #dc3545 0%, #ff7788 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-weight: 700;
+        }
+
+        .progress-text {
+            text-align: center;
+            color: #aaa;
+            font-size: 0.9em;
+        }
+
+        @media (max-width: 768px) {
+            .file-item {
+                grid-template-columns: 1fr;
+            }
+
+            .file-metadata {
+                grid-template-columns: 1fr;
+            }
+
+            .file-actions {
+                width: 100%;
+                justify-content: space-between;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>🎵 Music Metadata Batch Editor</h1>
+
+    <div id="drop-zone">
+        <div class="drop-icon">📁</div>
+<div class="drop-text">Drop music files/folders here or click to browse</div>
+<div class="drop-subtext">Supports MP3, M4A, FLAC, OGG, WAV, AAC, WMA</div>
+<div style="margin-top: 15px; display: flex; gap: 10px;">
+    <button onclick="app.selectFiles(); event.stopPropagation();" style="padding: 8px 16px;">Select Files</button>
+    <button onclick="app.selectFolder(); event.stopPropagation();" style="padding: 8px 16px;">Select Folder</button>
+</div>
+        <input type="file" id="file-input" accept="audio/*" multiple style="display: none;">
+        <input type="file" id="folder-input" webkitdirectory directory multiple style="display: none;">
+    </div>
+
+    <div id="controls">
+        <button id="parse-all-btn" disabled>Parse All Metadata</button>
+        <button id="export-all-btn" disabled>Export All with Metadata</button>
+        <button id="export-selected-btn" disabled>Export Selected</button>
+        <button id="clear-all-btn" disabled>Clear All</button>
+    </div>
+
+    <div id="progress-container">
+        <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill">0%</div>
+        </div>
+        <div class="progress-text" id="progress-text">Processing...</div>
+    </div>
+
+    <div id="file-list">
+        <div class="file-list-header">
+            <h2>Loaded Files</h2>
+            <div class="stats">
+                <div class="stat">
+                    <span>📊 Total:</span>
+                    <span id="total-files">0</span>
+                </div>
+                <div class="stat">
+                    <span>✏️ Edited:</span>
+                    <span id="edited-files">0</span>
+                </div>
+            </div>
+        </div>
+        <div id="file-items">
+            <div class="empty-state">No files loaded. Drop files above to get started!</div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+        // ============================================
+        // METADATA WRITER - Writes metadata to audio files
+        // ============================================
+        class MetadataWriter {
+            constructor(debugLog) {
+                this.debugLog = debugLog || console.log;
+            }
+
+            async writeMetadata(file, metadata) {
+                const extension = file.name.split('.').pop().toLowerCase();
+                this.debugLog(`Writing metadata to ${extension} file: ${file.name}`);
+                
+                try {
+                    let newFile;
+                    
+                    switch(extension) {
+                        case 'mp3':
+                            newFile = await this.writeMP3(file, metadata);
+                            break;
+                        case 'm4a':
+                        case 'mp4':
+                        case 'aac':
+                            newFile = await this.writeM4A(file, metadata);
+                            break;
+                        case 'flac':
+                            newFile = await this.writeFLAC(file, metadata);
+                            break;
+                        case 'ogg':
+                            newFile = await this.writeOGG(file, metadata);
+                            break;
+                        default:
+                            throw new Error(`Writing metadata not supported for ${extension}`);
+                    }
+                    
+                    this.debugLog('Metadata written successfully', 'success');
+                    return newFile;
+                    
+                } catch (err) {
+                    this.debugLog(`Failed to write metadata: ${err.message}`, 'error');
+                    throw err;
+                }
+            }
+
+            // ========== MP3 / ID3v2.3 Writer ==========
+            async writeMP3(file, metadata) {
+                const buffer = await this.readEntireFile(file);
+                const view = new DataView(buffer);
+                
+                // Check if ID3v2 tag exists
+                let audioDataStart = 0;
+                if (String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2)) === 'ID3') {
+                    // Skip existing ID3v2 tag
+                    const tagSize = this.synchsafe32(view, 6);
+                    audioDataStart = 10 + tagSize;
+                }
+                
+                // Create new ID3v2.3 tag
+const frames = [];
+
+// Text frames
+if (metadata.title) frames.push(this.createTextFrame('TIT2', metadata.title));
+if (metadata.artist) frames.push(this.createTextFrame('TPE1', metadata.artist));
+if (metadata.album) frames.push(this.createTextFrame('TALB', metadata.album));
+if (metadata.year) frames.push(this.createTextFrame('TYER', metadata.year.toString()));
+
+// Picture frame
+if (metadata.imageData) {
+    frames.push(this.createAPICFrame(metadata.imageData, metadata.imageMimeType));
+}
+
+// Calculate total frame size
+let frameSize = 0;
+frames.forEach(frame => frameSize += frame.byteLength);
+                
+// Add padding (2KB)
+const padding = 2048;
+const tagSize = frameSize + padding;
+                
+                // Create new ID3v2 header
+                const header = new Uint8Array(10);
+                header[0] = 0x49; // 'I'
+                header[1] = 0x44; // 'D'
+                header[2] = 0x33; // '3'
+                header[3] = 0x03; // Version 2.3
+                header[4] = 0x00; // Revision 0
+                header[5] = 0x00; // Flags
+                this.writeSynchsafe32(header, 6, tagSize);
+                
+                // Combine header + frames + padding + audio data
+                const audioData = new Uint8Array(buffer, audioDataStart);
+                const newSize = 10 + tagSize + audioData.byteLength;
+                const newBuffer = new Uint8Array(newSize);
+                
+                let offset = 0;
+                newBuffer.set(header, offset);
+                offset += 10;
+                
+                frames.forEach(frame => {
+                    newBuffer.set(new Uint8Array(frame), offset);
+                    offset += frame.byteLength;
+                });
+                
+                // Add padding (zeros)
+                offset += padding;
+                
+                // Add audio data
+                newBuffer.set(audioData, offset);
+                
+                return new File([newBuffer], file.name, { type: file.type });
+            }
+
+            createTextFrame(frameId, text) {
+                const textBytes = new TextEncoder().encode(text);
+                const frame = new Uint8Array(10 + 1 + textBytes.byteLength);
+                
+                // Frame ID
+                for (let i = 0; i < 4; i++) {
+                    frame[i] = frameId.charCodeAt(i);
+                }
+                
+                // Frame size (not synchsafe in ID3v2.3)
+                const size = 1 + textBytes.byteLength;
+                frame[4] = (size >> 24) & 0xFF;
+                frame[5] = (size >> 16) & 0xFF;
+                frame[6] = (size >> 8) & 0xFF;
+                frame[7] = size & 0xFF;
+                
+                // Flags
+                frame[8] = 0x00;
+                frame[9] = 0x00;
+                
+                // Encoding (ISO-8859-1 for compatibility)
+frame[10] = 0x00;
+
+// Text data (convert to ISO-8859-1 by taking only the low byte)
+const isoBytes = new Uint8Array(textBytes.length);
+for (let i = 0; i < textBytes.length; i++) {
+    // For characters > 255, replace with '?'
+    isoBytes[i] = textBytes[i] > 255 ? 0x3F : textBytes[i];
+}
+frame.set(isoBytes, 11);
+                
+                return frame.buffer;
+            }
+
+            createAPICFrame(imageData, mimeType) {
+    const mimeBytes = new TextEncoder().encode(mimeType);
+    const frameSize = 1 + mimeBytes.byteLength + 1 + 1 + 1 + imageData.byteLength;
+    const frame = new Uint8Array(10 + frameSize);
+    
+    // Frame ID 'APIC'
+    frame[0] = 0x41; // 'A'
+    frame[1] = 0x50; // 'P'
+    frame[2] = 0x49; // 'I'
+    frame[3] = 0x43; // 'C'
+    
+    // Frame size (not synchsafe in ID3v2.3)
+    frame[4] = (frameSize >> 24) & 0xFF;
+    frame[5] = (frameSize >> 16) & 0xFF;
+    frame[6] = (frameSize >> 8) & 0xFF;
+    frame[7] = frameSize & 0xFF;
+    
+    // Flags
+    frame[8] = 0x00;
+    frame[9] = 0x00;
+    
+    // Text encoding (ISO-8859-1)
+    frame[10] = 0x00;
+    
+    // MIME type
+    frame.set(mimeBytes, 11);
+    
+    // Null terminator for MIME type
+    frame[11 + mimeBytes.byteLength] = 0x00;
+    
+    // Picture type (0x03 = Cover (front))
+    frame[12 + mimeBytes.byteLength] = 0x03;
+    
+    // Description (empty, null-terminated)
+    frame[13 + mimeBytes.byteLength] = 0x00;
+    
+    // Picture data
+    frame.set(imageData, 14 + mimeBytes.byteLength);
+    
+    return frame.buffer;
+}
+
+            // ========== M4A / MP4 Writer ==========
+            async writeM4A(file, metadata) {
+                const buffer = await this.readEntireFile(file);
+                const view = new DataView(buffer);
+                
+                // Parse atoms to find moov
+                let moovStart = 0;
+                let moovSize = 0;
+                let pos = 0;
+                
+                while (pos < buffer.byteLength - 8) {
+                    const atomSize = view.getUint32(pos);
+                    const atomType = String.fromCharCode(
+                        view.getUint8(pos+4), view.getUint8(pos+5),
+                        view.getUint8(pos+6), view.getUint8(pos+7)
+                    );
+                    
+                    if (atomType === 'moov') {
+                        moovStart = pos;
+                        moovSize = atomSize;
+                        break;
+                    }
+                    
+                    pos += atomSize;
+                }
+                
+                if (moovSize === 0) {
+                    throw new Error('No moov atom found in M4A file');
+                }
+                
+                // Create new ilst atom with metadata
+                const ilstData = this.createILSTAtom(metadata);
+                
+                // Find or create udta->meta->ilst path in moov
+                const moovData = new Uint8Array(buffer, moovStart + 8, moovSize - 8);
+                const newMoovData = this.insertILSTIntoMoov(moovData, ilstData);
+                
+                // Rebuild file with new moov
+                const beforeMoov = new Uint8Array(buffer, 0, moovStart);
+                const afterMoov = new Uint8Array(buffer, moovStart + moovSize);
+                
+                const newMoovSize = 8 + newMoovData.byteLength;
+                const newMoovAtom = new Uint8Array(newMoovSize);
+                new DataView(newMoovAtom.buffer).setUint32(0, newMoovSize);
+                newMoovAtom[4] = 0x6D; // 'm'
+                newMoovAtom[5] = 0x6F; // 'o'
+                newMoovAtom[6] = 0x6F; // 'o'
+                newMoovAtom[7] = 0x76; // 'v'
+                newMoovAtom.set(newMoovData, 8);
+                
+                const newBuffer = new Uint8Array(beforeMoov.byteLength + newMoovAtom.byteLength + afterMoov.byteLength);
+                newBuffer.set(beforeMoov, 0);
+                newBuffer.set(newMoovAtom, beforeMoov.byteLength);
+                newBuffer.set(afterMoov, beforeMoov.byteLength + newMoovAtom.byteLength);
+                
+                return new File([newBuffer], file.name, { type: file.type });
+            }
+
+            createILSTAtom(metadata) {
+                const items = [];
+
+if (metadata.title) items.push(this.createILSTItem('©nam', metadata.title));
+if (metadata.artist) items.push(this.createILSTItem('©ART', metadata.artist));
+if (metadata.album) items.push(this.createILSTItem('©alb', metadata.album));
+if (metadata.year) items.push(this.createILSTItem('©day', metadata.year.toString()));
+if (metadata.imageData) items.push(this.createILSTImageItem('covr', metadata.imageData, metadata.imageMimeType));
+                
+                let totalSize = 0;
+                items.forEach(item => totalSize += item.byteLength);
+                
+                const ilst = new Uint8Array(8 + totalSize);
+                const view = new DataView(ilst.buffer);
+                view.setUint32(0, ilst.byteLength);
+                ilst[4] = 0x69; // 'i'
+                ilst[5] = 0x6C; // 'l'
+                ilst[6] = 0x73; // 's'
+                ilst[7] = 0x74; // 't'
+                
+                let offset = 8;
+                items.forEach(item => {
+                    ilst.set(new Uint8Array(item), offset);
+                    offset += item.byteLength;
+                });
+                
+                return ilst;
+            }
+
+            createILSTItem(name, value) {
+                const textBytes = new TextEncoder().encode(value);
+                const dataSize = 16 + textBytes.byteLength;
+                const itemSize = 8 + dataSize;
+                
+                const item = new Uint8Array(itemSize);
+                const view = new DataView(item.buffer);
+                
+                // Item atom
+                view.setUint32(0, itemSize);
+                for (let i = 0; i < 4; i++) {
+                    item[4 + i] = name.charCodeAt(i);
+                }
+                
+                // Data atom
+                view.setUint32(8, dataSize);
+                item[12] = 0x64; // 'd'
+                item[13] = 0x61; // 'a'
+                item[14] = 0x74; // 't'
+                item[15] = 0x61; // 'a'
+                view.setUint32(16, 1); // Type: text
+                view.setUint32(20, 0); // Reserved
+                item.set(textBytes, 24);
+                
+                return item.buffer;
+            }
+
+            createILSTImageItem(name, imageData, mimeType) {
+    const dataSize = 16 + imageData.byteLength;
+    const itemSize = 8 + dataSize;
+    
+    const item = new Uint8Array(itemSize);
+    const view = new DataView(item.buffer);
+    
+    // Item atom
+    view.setUint32(0, itemSize);
+    for (let i = 0; i < 4; i++) {
+        item[4 + i] = name.charCodeAt(i);
+    }
+    
+    // Data atom
+    view.setUint32(8, dataSize);
+    item[12] = 0x64; // 'd'
+    item[13] = 0x61; // 'a'
+    item[14] = 0x74; // 't'
+    item[15] = 0x61; // 'a'
+    
+    // Type: 13 for JPEG, 14 for PNG
+    const imageType = mimeType === 'image/png' ? 14 : 13;
+    view.setUint32(16, imageType);
+    view.setUint32(20, 0); // Reserved
+    
+    item.set(imageData, 24);
+    
+    return item.buffer;
+}
+
+            insertILSTIntoMoov(moovData, ilstData) {
+                // For simplicity, we'll append udta->meta->ilst at the end of moov
+                // A full implementation would search for existing udta/meta and update it
+                
+                const metaSize = 8 + 4 + ilstData.byteLength; // meta header + version/flags + ilst
+                const udtaSize = 8 + metaSize;
+                
+                const newData = new Uint8Array(moovData.byteLength + udtaSize);
+                newData.set(moovData, 0);
+                
+                const view = new DataView(newData.buffer);
+                let offset = moovData.byteLength;
+                
+                // udta atom
+                view.setUint32(offset, udtaSize);
+                newData[offset+4] = 0x75; // 'u'
+                newData[offset+5] = 0x64; // 'd'
+                newData[offset+6] = 0x74; // 't'
+                newData[offset+7] = 0x61; // 'a'
+                offset += 8;
+                
+                // meta atom
+                view.setUint32(offset, metaSize);
+                newData[offset+4] = 0x6D; // 'm'
+                newData[offset+5] = 0x65; // 'e'
+                newData[offset+6] = 0x74; // 't'
+                newData[offset+7] = 0x61; // 'a'
+                view.setUint32(offset+8, 0); // version/flags
+                offset += 12;
+                
+                // ilst atom
+                newData.set(ilstData, offset);
+                
+                return newData;
+            }
+
+            // ========== FLAC Writer ==========
+            async writeFLAC(file, metadata) {
+                const buffer = await this.readEntireFile(file);
+                const view = new DataView(buffer);
+                
+                // Verify FLAC marker
+                if (String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)) !== 'fLaC') {
+                    throw new Error('Not a valid FLAC file');
+                }
+                
+                // Parse blocks to find VORBIS_COMMENT and where audio data starts
+                let pos = 4;
+                let audioDataStart = 4;
+                const blocks = [];
+                
+                while (pos < buffer.byteLength - 4) {
+    const header = view.getUint8(pos);
+    const isLast = (header & 0x80) !== 0;
+    const blockType = header & 0x7F;
+    const blockSize = (view.getUint8(pos+1) << 16) | (view.getUint8(pos+2) << 8) | view.getUint8(pos+3);
+    
+    const blockData = new Uint8Array(buffer, pos, 4 + blockSize);
+    
+    // Skip VORBIS_COMMENT and PICTURE blocks (types 4 and 6), we'll replace them
+    if (blockType !== 4 && blockType !== 6) {
+        // Clear the "last block" flag from existing blocks
+        const blockCopy = new Uint8Array(blockData);
+        blockCopy[0] = blockCopy[0] & 0x7F; // Clear bit 7
+        blocks.push(blockCopy);
+    }
+                    
+                    pos += 4 + blockSize;
+                    audioDataStart = pos;
+                    
+                    if (isLast) break;
+                }
+                
+                // Create new VORBIS_COMMENT block
+const vorbisComment = this.createVorbisCommentBlock(metadata);
+blocks.push(vorbisComment);
+
+// Add PICTURE block if image data exists
+if (metadata.imageData) {
+    const pictureBlock = this.createFLACPictureBlock(metadata.imageData, metadata.imageMimeType);
+    blocks.push(pictureBlock);
+}
+
+// Mark last block
+blocks[blocks.length - 1][0] |= 0x80;
+                
+                // Rebuild file
+                const audioData = new Uint8Array(buffer, audioDataStart);
+                let totalBlockSize = 4; // 'fLaC'
+                blocks.forEach(block => totalBlockSize += block.byteLength);
+                
+                const newBuffer = new Uint8Array(totalBlockSize + audioData.byteLength);
+                newBuffer[0] = 0x66; // 'f'
+                newBuffer[1] = 0x4C; // 'L'
+                newBuffer[2] = 0x61; // 'a'
+                newBuffer[3] = 0x43; // 'C'
+                
+                let offset = 4;
+                blocks.forEach(block => {
+                    newBuffer.set(block, offset);
+                    offset += block.byteLength;
+                });
+                
+                newBuffer.set(audioData, offset);
+                
+                return new File([newBuffer], file.name, { type: file.type });
+            }
+
+            createVorbisCommentBlock(metadata) {
+                const comments = [];
+                
+                if (metadata.title) comments.push(`TITLE=${metadata.title}`);
+                if (metadata.artist) comments.push(`ARTIST=${metadata.artist}`);
+                if (metadata.album) comments.push(`ALBUM=${metadata.album}`);
+                if (metadata.year) comments.push(`DATE=${metadata.year}`);
+                
+                const vendor = 'JavaScript Metadata Editor';
+                const vendorBytes = new TextEncoder().encode(vendor);
+                
+                let commentSize = 4 + vendorBytes.byteLength + 4;
+                const commentBytes = [];
+                
+                comments.forEach(comment => {
+                    const bytes = new TextEncoder().encode(comment);
+                    commentBytes.push(bytes);
+                    commentSize += 4 + bytes.byteLength;
+                });
+                
+                const block = new Uint8Array(4 + commentSize);
+                const view = new DataView(block.buffer);
+                
+                // Block header
+                block[0] = 4; // Block type: VORBIS_COMMENT (will be marked as last later)
+                block[1] = (commentSize >> 16) & 0xFF;
+                block[2] = (commentSize >> 8) & 0xFF;
+                block[3] = commentSize & 0xFF;
+                
+                // Vendor string
+                let offset = 4;
+                view.setUint32(offset, vendorBytes.byteLength, true);
+                offset += 4;
+                block.set(vendorBytes, offset);
+                offset += vendorBytes.byteLength;
+                
+                // Comment count
+                view.setUint32(offset, comments.length, true);
+                offset += 4;
+                
+                // Comments
+                commentBytes.forEach(bytes => {
+                    view.setUint32(offset, bytes.byteLength, true);
+                    offset += 4;
+                    block.set(bytes, offset);
+                    offset += bytes.byteLength;
+                });
+                
+                return block;
+            }
+
+            createFLACPictureBlock(imageData, mimeType) {
+    const mimeBytes = new TextEncoder().encode(mimeType);
+    const descBytes = new TextEncoder().encode('');
+    
+    const blockDataSize = 4 + 4 + mimeBytes.byteLength + 4 + descBytes.byteLength + 
+                         4 + 4 + 4 + 4 + 4 + imageData.byteLength;
+    
+    const block = new Uint8Array(4 + blockDataSize);
+    const view = new DataView(block.buffer);
+    
+    // Block header (type 6 = PICTURE)
+    block[0] = 6;
+    block[1] = (blockDataSize >> 16) & 0xFF;
+    block[2] = (blockDataSize >> 8) & 0xFF;
+    block[3] = blockDataSize & 0xFF;
+    
+    let offset = 4;
+    
+    // Picture type (3 = Cover (front))
+    view.setUint32(offset, 3);
+    offset += 4;
+    
+    // MIME type length and data
+    view.setUint32(offset, mimeBytes.byteLength);
+    offset += 4;
+    block.set(mimeBytes, offset);
+    offset += mimeBytes.byteLength;
+    
+    // Description length and data (empty)
+    view.setUint32(offset, 0);
+    offset += 4;
+    
+    // Width, height, color depth, colors used (all 0 for now)
+    view.setUint32(offset, 0);
+    offset += 4;
+    view.setUint32(offset, 0);
+    offset += 4;
+    view.setUint32(offset, 0);
+    offset += 4;
+    view.setUint32(offset, 0);
+    offset += 4;
+    
+    // Picture data length
+    view.setUint32(offset, imageData.byteLength);
+    offset += 4;
+    
+    // Picture data
+    block.set(imageData, offset);
+    
+    return block;
+}
+
+            // ========== OGG Vorbis Writer ==========
+            async writeOGG(file, metadata) {
+                const buffer = await this.readEntireFile(file);
+                const view = new DataView(buffer);
+                
+                // Verify OGG marker
+                if (String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)) !== 'OggS') {
+                    throw new Error('Not a valid OGG file');
+                }
+                
+                // This is complex - OGG uses pages and we need to replace the comment header page
+                // For now, we'll throw an error and recommend converting to another format
+                throw new Error('OGG metadata writing is not yet implemented. Please convert to MP3, M4A, or FLAC first.');
+            }
+
+            // ========== Helper Functions ==========
+            async readEntireFile(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = () => reject(new Error('File read failed'));
+                    reader.readAsArrayBuffer(file);
+                });
+            }
+
+            synchsafe32(view, offset) {
+                return (view.getUint8(offset) << 21) |
+                       (view.getUint8(offset+1) << 14) |
+                       (view.getUint8(offset+2) << 7) |
+                       view.getUint8(offset+3);
+            }
+
+            writeSynchsafe32(array, offset, value) {
+                array[offset] = (value >> 21) & 0x7F;
+                array[offset+1] = (value >> 14) & 0x7F;
+                array[offset+2] = (value >> 7) & 0x7F;
+                array[offset+3] = value & 0x7F;
+            }
+        }
+
+        // Metadata Parser (embedded from provided file)
+        class MetadataParser {
+            constructor(debugLog) {
+                this.debugLog = debugLog || console.log;
+            }
+
+            async extractMetadata(file) {
+                const extension = file.name.split('.').pop().toLowerCase();
+                
+                try {
+                    let metadata;
+                    
+                    switch(extension) {
+                        case 'mp3':
+                            metadata = await this.parseMP3(file);
+                            break;
+                        case 'm4a':
+                        case 'mp4':
+                        case 'aac':
+                            metadata = await this.parseM4A(file);
+                            break;
+                        case 'flac':
+                            metadata = await this.parseFLAC(file);
+                            break;
+                        case 'ogg':
+                            metadata = await this.parseOGG(file);
+                            break;
+                        case 'wav':
+                            metadata = await this.parseWAV(file);
+                            break;
+                        default:
+                            metadata = this.getDefaultMetadata(file);
+                    }
+                    
+                    return metadata;
+                    
+                } catch (err) {
+                    return this.getDefaultMetadata(file);
+                }
+            }
+
+            async parseMP3(file) {
+                const buffer = await this.readFileChunk(file, 0, 500000);
+                const view = new DataView(buffer);
+                
+                if (String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2)) !== 'ID3') {
+                    throw new Error('No ID3v2 tag found');
+                }
+                
+                const version = view.getUint8(3);
+                const tagSize = this.synchsafe32(view, 6);
+                
+                let metadata = { title: null, artist: null, album: null, year: null, image: null };
+                let pos = 10;
+
+                while (pos < tagSize + 10) {
+                    if (pos + 10 > buffer.byteLength) break;
+                    
+                    const frameId = String.fromCharCode(
+                        view.getUint8(pos), view.getUint8(pos+1), 
+                        view.getUint8(pos+2), view.getUint8(pos+3)
+                    );
+                    
+                    const frameSize = version === 4 
+                        ? this.synchsafe32(view, pos + 4)
+                        : view.getUint32(pos + 4);
+                    
+                    if (frameSize === 0 || frameSize > tagSize) break;
+                    
+                    const dataStart = pos + 10;
+                    const encoding = view.getUint8(dataStart);
+
+                    if (frameId === 'TIT2') metadata.title = this.decodeText(view, dataStart + 1, frameSize - 1, encoding);
+                    if (frameId === 'TPE1') metadata.artist = this.decodeText(view, dataStart + 1, frameSize - 1, encoding);
+                    if (frameId === 'TALB') metadata.album = this.decodeText(view, dataStart + 1, frameSize - 1, encoding);
+                    if (frameId === 'TYER' || frameId === 'TDRC') {
+                        const yearText = this.decodeText(view, dataStart + 1, frameSize - 1, encoding);
+                        metadata.year = parseInt(yearText);
+                    }
+                    
+                    if (frameId === 'APIC') {
+                        metadata.image = this.extractID3Image(view, dataStart, frameSize);
+                    }
+                    
+                    pos += 10 + frameSize;
+                }
+                
+                return this.normalizeMetadata(metadata, file);
+            }
+
+            async parseM4A(file) {
+                const buffer = await this.readFileChunk(file, 0, 200000);
+                const view = new DataView(buffer);
+                
+                let metadata = { title: null, artist: null, album: null, year: null, image: null };
+                let pos = 0;
+
+                while (pos < buffer.byteLength - 8) {
+                    const atomSize = view.getUint32(pos);
+                    const atomType = String.fromCharCode(
+                        view.getUint8(pos+4), view.getUint8(pos+5), 
+                        view.getUint8(pos+6), view.getUint8(pos+7)
+                    );
+                    
+                    if (atomType === 'moov') {
+                        const ilst = this.findAtom(view, pos + 8, atomSize - 8, ['udta', 'meta', 'ilst']);
+                        if (ilst) {
+                            metadata = this.parseILST(view, ilst.pos, ilst.size);
+                        }
+                        break;
+                    }
+                    
+                    pos += atomSize;
+                }
+                
+                return this.normalizeMetadata(metadata, file);
+            }
+
+            parseILST(view, start, size) {
+                const metadata = { title: null, artist: null, album: null, year: null, image: null };
+                let pos = start;
+                const end = start + size;
+
+                while (pos < end - 8) {
+                    const atomSize = view.getUint32(pos);
+                    if (atomSize === 0 || atomSize > (end - pos)) break;
+                    
+                    const atomType = String.fromCharCode(
+                        view.getUint8(pos+4), view.getUint8(pos+5), 
+                        view.getUint8(pos+6), view.getUint8(pos+7)
+                    );
+                    
+                    const dataPos = pos + 8;
+                    const dataSize = view.getUint32(dataPos);
+                    const dataType = String.fromCharCode(
+                        view.getUint8(dataPos+4), view.getUint8(dataPos+5), 
+                        view.getUint8(dataPos+6), view.getUint8(dataPos+7)
+                    );
+                    
+                    if (dataType === 'data') {
+                        const dataFlags = view.getUint32(dataPos + 8);
+                        const textStart = dataPos + 16;
+                        const textLen = dataSize - 16;
+                        
+                        if (dataFlags === 1) {
+                            const text = this.decodeText(view, textStart, textLen, 1);
+                            
+                            if (atomType === '©nam') metadata.title = text;
+                            if (atomType === '©ART') metadata.artist = text;
+                            if (atomType === '©alb') metadata.album = text;
+                            if (atomType === '©day') metadata.year = parseInt(text);
+                        }
+                        
+                        if ((dataFlags === 13 || dataFlags === 14) && atomType === 'covr') {
+                            const imageData = new Uint8Array(view.buffer, textStart, textLen);
+                            const mimeType = dataFlags === 13 ? 'image/jpeg' : 'image/png';
+                            const blob = new Blob([imageData], { type: mimeType });
+                            metadata.image = URL.createObjectURL(blob);
+                        }
+                    }
+                    
+                    pos += atomSize;
+                }
+                
+                return metadata;
+            }
+
+            async parseFLAC(file) {
+                const buffer = await this.readFileChunk(file, 0, 200000);
+                const view = new DataView(buffer);
+                
+                if (String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)) !== 'fLaC') {
+                    throw new Error('Not a valid FLAC file');
+                }
+                
+                let metadata = { title: null, artist: null, album: null, year: null, image: null };
+                let pos = 4;
+
+                while (pos < buffer.byteLength - 4) {
+                    const header = view.getUint8(pos);
+                    const isLast = (header & 0x80) !== 0;
+                    const blockType = header & 0x7F;
+                    const blockSize = (view.getUint8(pos+1) << 16) | (view.getUint8(pos+2) << 8) | view.getUint8(pos+3);
+                    
+                    pos += 4;
+                    
+                    if (blockType === 4) {
+                        metadata = this.parseVorbisComment(view, pos, blockSize);
+                    }
+                    
+                    if (blockType === 6) {
+                        metadata.image = this.parseFLACPicture(view, pos, blockSize);
+                    }
+                    
+                    pos += blockSize;
+                    
+                    if (isLast) break;
+                }
+                
+                return this.normalizeMetadata(metadata, file);
+            }
+
+            parseVorbisComment(view, start, size) {
+                const metadata = { title: null, artist: null, album: null, year: null };
+                let pos = start;
+                
+                const vendorLen = view.getUint32(pos, true);
+                pos += 4 + vendorLen;
+                
+                const commentCount = view.getUint32(pos, true);
+                pos += 4;
+                
+                for (let i = 0; i < commentCount; i++) {
+                    const commentLen = view.getUint32(pos, true);
+                    pos += 4;
+                    
+                    const comment = this.decodeText(view, pos, commentLen, 1);
+                    pos += commentLen;
+                    
+                    const [key, value] = comment.split('=', 2);
+                    const keyUpper = key.toUpperCase();
+                    
+                    if (keyUpper === 'TITLE') metadata.title = value;
+                    if (keyUpper === 'ARTIST') metadata.artist = value;
+                    if (keyUpper === 'ALBUM') metadata.album = value;
+                    if (keyUpper === 'DATE' || keyUpper === 'YEAR') metadata.year = parseInt(value);
+                }
+                
+                return metadata;
+            }
+
+            parseFLACPicture(view, start, size) {
+                let pos = start;
+                pos += 4;
+                
+                const mimeLen = view.getUint32(pos);
+                pos += 4;
+                const mimeType = this.decodeText(view, pos, mimeLen, 1);
+                pos += mimeLen;
+                
+                const descLen = view.getUint32(pos);
+                pos += 4 + descLen;
+                pos += 16;
+                
+                const imageLen = view.getUint32(pos);
+                pos += 4;
+                
+                const imageData = new Uint8Array(view.buffer, pos, imageLen);
+                const blob = new Blob([imageData], { type: mimeType });
+                return URL.createObjectURL(blob);
+            }
+
+            async parseOGG(file) {
+                const buffer = await this.readFileChunk(file, 0, 100000);
+                const view = new DataView(buffer);
+                
+                if (String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)) !== 'OggS') {
+                    throw new Error('Not a valid OGG file');
+                }
+                
+                let metadata = { title: null, artist: null, album: null, year: null, image: null };
+                let pos = 0;
+
+                while (pos < buffer.byteLength - 27) {
+                    if (String.fromCharCode(view.getUint8(pos), view.getUint8(pos+1), view.getUint8(pos+2), view.getUint8(pos+3)) !== 'OggS') {
+                        pos++;
+                        continue;
+                    }
+                    
+                    const segmentCount = view.getUint8(pos + 26);
+                    pos += 27;
+                    
+                    let pageSize = 0;
+                    for (let i = 0; i < segmentCount; i++) {
+                        pageSize += view.getUint8(pos + i);
+                    }
+                    pos += segmentCount;
+                    
+                    const packetType = view.getUint8(pos);
+                    if (packetType === 3) {
+                        const vorbisStr = String.fromCharCode(
+                            view.getUint8(pos+1), view.getUint8(pos+2), 
+                            view.getUint8(pos+3), view.getUint8(pos+4), 
+                            view.getUint8(pos+5), view.getUint8(pos+6)
+                        );
+                        
+                        if (vorbisStr === 'vorbis') {
+                            metadata = this.parseVorbisComment(view, pos + 7, pageSize - 7);
+                            break;
+                        }
+                    }
+                    
+                    pos += pageSize;
+                }
+                
+                return this.normalizeMetadata(metadata, file);
+            }
+
+            async parseWAV(file) {
+                const buffer = await this.readFileChunk(file, 0, 100000);
+                const view = new DataView(buffer);
+                
+                if (String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)) !== 'RIFF') {
+                    throw new Error('Not a valid WAV file');
+                }
+                
+                let metadata = { title: null, artist: null, album: null, year: null, image: null };
+                
+                return this.normalizeMetadata(metadata, file);
+            }
+
+            async readFileChunk(file, start, length) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = () => reject(new Error('File read failed'));
+                    reader.readAsArrayBuffer(file.slice(start, start + length));
+                });
+            }
+
+            synchsafe32(view, offset) {
+                return (view.getUint8(offset) << 21) | 
+                       (view.getUint8(offset+1) << 14) | 
+                       (view.getUint8(offset+2) << 7) | 
+                       view.getUint8(offset+3);
+            }
+
+            decodeText(view, start, length, encoding) {
+                const bytes = new Uint8Array(view.buffer, start, length);
+                
+                try {
+                    if (encoding === 0) {
+                        return String.fromCharCode(...bytes);
+                    } else if (encoding === 1 || encoding === undefined) {
+                        return new TextDecoder('utf-8').decode(bytes);
+                    } else if (encoding === 2) {
+                        return new TextDecoder('utf-16le').decode(bytes);
+                    } else if (encoding === 3) {
+                        return new TextDecoder('utf-16be').decode(bytes);
+                    }
+                } catch (e) {
+                    return String.fromCharCode(...bytes.filter(b => b >= 32 && b <= 126));
+                }
+                
+                return '';
+            }
+
+            extractID3Image(view, start, size) {
+                try {
+                    let pos = start + 1;
+                    
+                    while (pos < start + size && view.getUint8(pos) !== 0) pos++;
+                    pos++;
+                    
+                    pos++;
+                    
+                    while (pos < start + size && view.getUint8(pos) !== 0) pos++;
+                    pos++;
+                    
+                    const imageData = new Uint8Array(view.buffer, pos, start + size - pos);
+                    const header = String.fromCharCode(imageData[0], imageData[1]);
+                    const mimeType = (header === '\xff\xd8' || header.charCodeAt(0) === 255) ? 'image/jpeg' : 'image/png';
+                    
+                    const blob = new Blob([imageData], { type: mimeType });
+                    return URL.createObjectURL(blob);
+                } catch (e) {
+                    return null;
+                }
+            }
+
+            findAtom(view, start, size, path) {
+                let pos = start;
+                const end = start + size;
+                const targetAtom = path[0];
+                
+                while (pos < end - 8) {
+                    const atomSize = view.getUint32(pos);
+                    if (atomSize === 0 || atomSize > (end - pos)) break;
+                    
+                    const atomType = String.fromCharCode(
+                        view.getUint8(pos+4), view.getUint8(pos+5), 
+                        view.getUint8(pos+6), view.getUint8(pos+7)
+                    );
+                    
+                    if (atomType === targetAtom) {
+                        if (path.length === 1) {
+                            return { pos: pos + 8, size: atomSize - 8 };
+                        } else {
+                            return this.findAtom(view, pos + 8, atomSize - 8, path.slice(1));
+                        }
+                    }
+                    
+                    pos += atomSize;
+                }
+                
+                return null;
+            }
+
+            normalizeMetadata(metadata, file) {
+                return {
+                    title: metadata.title || file.name.split('.').slice(0, -1).join('.'),
+                    artist: metadata.artist || 'Unknown Artist',
+                    album: metadata.album || 'Unknown Album',
+                    year: metadata.year || null,
+                    image: metadata.image || null,
+                    hasMetadata: !!(metadata.title || metadata.artist || metadata.album)
+                };
+            }
+
+            getDefaultMetadata(file) {
+                return {
+                    title: file.name.split('.').slice(0, -1).join('.'),
+                    artist: 'Unknown Artist',
+                    album: 'Unknown Album',
+                    year: null,
+                    image: null,
+                    hasMetadata: false
+                };
+            }
+        }
+
+        // Main Application
+        class MetadataEditor {
+            constructor() {
+                this.parser = new MetadataParser();
+                this.writer = new MetadataWriter();
+                this.files = [];
+                this.initializeUI();
+            }
+
+            initializeUI() {
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const folderInput = document.getElementById('folder-input');
+    
+    // Don't auto-click on drop zone click anymore since we have buttons
+    fileInput.addEventListener('change', (e) => this.handleFiles(e.target.files));
+    folderInput.addEventListener('change', (e) => this.handleFiles(e.target.files));
+                
+                dropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.add('drag-over');
+                });
+                
+                dropZone.addEventListener('dragleave', () => {
+                    dropZone.classList.remove('drag-over');
+                });
+                
+                dropZone.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    dropZone.classList.remove('drag-over');
+                    this.handleFiles(e.dataTransfer.files);
+                });
+                
+                document.getElementById('parse-all-btn').addEventListener('click', () => this.parseAllMetadata());
+                document.getElementById('export-all-btn').addEventListener('click', () => this.exportAll());
+                document.getElementById('clear-all-btn').addEventListener('click', () => this.clearAll());
+            }
+
+            selectFiles() {
+    document.getElementById('file-input').click();
+}
+
+selectFolder() {
+    document.getElementById('folder-input').click();
+}
+
+            async handleFiles(fileList) {
+                const audioFiles = Array.from(fileList).filter(file => file.type.startsWith('audio/'));
+                
+                for (const file of audioFiles) {
+                    const fileData = {
+                        id: Date.now() + Math.random(),
+                        file: file,
+                        metadata: null,
+                        editedMetadata: null,
+                        parsed: false
+                    };
+                    this.files.push(fileData);
+                }
+                
+                this.updateUI();
+                this.updateStats();
+            }
+
+            async parseAllMetadata() {
+                const progressContainer = document.getElementById('progress-container');
+                const progressFill = document.getElementById('progress-fill');
+                const progressText = document.getElementById('progress-text');
+                
+                progressContainer.classList.add('show');
+                
+                for (let i = 0; i < this.files.length; i++) {
+                    if (!this.files[i].parsed) {
+                        progressText.textContent = `Parsing ${i + 1} of ${this.files.length}: ${this.files[i].file.name}`;
+                        const progress = Math.round(((i + 1) / this.files.length) * 100);
+                        progressFill.style.width = progress + '%';
+                        progressFill.textContent = progress + '%';
+                        
+                        this.files[i].metadata = await this.parser.extractMetadata(this.files[i].file);
+                        this.files[i].parsed = true;
+                    }
+                }
+                
+                progressContainer.classList.remove('show');
+                this.updateUI();
+            }
+
+            updateUI() {
+                const container = document.getElementById('file-items');
+                
+                if (this.files.length === 0) {
+                    container.innerHTML = '<div class="empty-state">No files loaded. Drop files above to get started!</div>';
+                    document.getElementById('parse-all-btn').disabled = true;
+                    document.getElementById('export-all-btn').disabled = true;
+                    document.getElementById('clear-all-btn').disabled = true;
+                    return;
+                }
+                
+                document.getElementById('parse-all-btn').disabled = false;
+                document.getElementById('export-all-btn').disabled = false;
+                document.getElementById('clear-all-btn').disabled = false;
+                
+                container.innerHTML = '';
+                
+                this.files.forEach(fileData => {
+                    const item = document.createElement('div');
+                    item.className = 'file-item';
+                    if (fileData.editedMetadata) {
+                        item.classList.add('edited');
+                    }
+                    
+                    const metadata = fileData.editedMetadata || fileData.metadata || {
+                        title: fileData.file.name,
+                        artist: '',
+                        album: '',
+                        year: ''
+                    };
+                    
+                    item.innerHTML = `
+                        <div class="file-art">
+    ${metadata.image ? `<img src="${metadata.image}" alt="Cover">` : '<div class="file-art-placeholder">🎵</div>'}
+    <input type="file" id="art-input-${fileData.id}" accept="image/*" style="display: none;" onchange="app.handleArtUpload('${fileData.id}', event)">
+    <button class="file-art-upload" onclick="document.getElementById('art-input-${fileData.id}').click(); event.stopPropagation();">Change</button>
+</div>
+                        <div class="file-metadata">
+                            <div class="metadata-field">
+                                <label>Title</label>
+                                <input type="text" data-field="title" data-id="${fileData.id}" value="${metadata.title || ''}" ${!fileData.parsed ? 'disabled' : ''}>
+                            </div>
+                            <div class="metadata-field">
+                                <label>Artist</label>
+                                <input type="text" data-field="artist" data-id="${fileData.id}" value="${metadata.artist || ''}" ${!fileData.parsed ? 'disabled' : ''}>
+                            </div>
+                            <div class="metadata-field">
+                                <label>Album</label>
+                                <input type="text" data-field="album" data-id="${fileData.id}" value="${metadata.album || ''}" ${!fileData.parsed ? 'disabled' : ''}>
+                            </div>
+                            <div class="metadata-field">
+                                <label>Year</label>
+                                <input type="text" data-field="year" data-id="${fileData.id}" value="${metadata.year || ''}" ${!fileData.parsed ? 'disabled' : ''}>
+                            </div>
+                            <div>
+                                ${fileData.parsed ? (metadata.hasMetadata ? '<span class="badge badge-metadata">Has Metadata</span>' : '<span class="badge badge-no-metadata">No Metadata</span>') : ''}
+                                ${fileData.editedMetadata ? '<span class="badge badge-edited">Edited</span>' : ''}
+                            </div>
+                        </div>
+                        <div class="file-actions">
+                            <button class="action-btn" onclick="app.exportSingle('${fileData.id}')" ${!fileData.parsed ? 'disabled' : ''}>Export</button>
+                            <button class="action-btn" onclick="app.removeSingle('${fileData.id}')">Remove</button>
+                        </div>
+                    `;
+                    
+                    container.appendChild(item);
+                    
+                    // Add event listeners for editing
+                    item.querySelectorAll('input').forEach(input => {
+                        input.addEventListener('input', (e) => this.handleEdit(e));
+                    });
+                });
+            }
+
+            handleEdit(event) {
+                const id = event.target.dataset.id;
+                const field = event.target.dataset.field;
+                const value = event.target.value;
+                
+                const fileData = this.files.find(f => f.id == id);
+                if (!fileData) return;
+                
+                if (!fileData.editedMetadata) {
+                    fileData.editedMetadata = { ...fileData.metadata };
+                }
+                
+                fileData.editedMetadata[field] = value;
+                this.updateStats();
+                
+                // Update item styling
+                event.target.closest('.file-item').classList.add('edited');
+            }
+
+            async handleArtUpload(id, event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const fileData = this.files.find(f => f.id == id);
+    if (!fileData) return;
+    
+    // Read the image file
+    const arrayBuffer = await file.arrayBuffer();
+    const blob = new Blob([arrayBuffer], { type: file.type });
+    const imageUrl = URL.createObjectURL(blob);
+    
+    if (!fileData.editedMetadata) {
+        fileData.editedMetadata = { ...fileData.metadata };
+    }
+    
+    // Store both the image data and URL
+    fileData.editedMetadata.image = imageUrl;
+    fileData.editedMetadata.imageData = new Uint8Array(arrayBuffer);
+    fileData.editedMetadata.imageMimeType = file.type;
+    
+    this.updateUI();
+    this.updateStats();
+}
+
+            async exportSingle(id) {
+                const fileData = this.files.find(f => f.id == id);
+                if (!fileData) return;
+                
+                const metadata = fileData.editedMetadata || fileData.metadata;
+                
+                try {
+                    // Show progress
+                    const progressContainer = document.getElementById('progress-container');
+                    const progressText = document.getElementById('progress-text');
+                    progressContainer.classList.add('show');
+                    progressText.textContent = `Writing metadata to ${fileData.file.name}...`;
+                    
+                    // Write metadata to file
+                    const newFile = await this.writer.writeMetadata(fileData.file, metadata);
+                    
+                    // Download the file
+                    const url = URL.createObjectURL(newFile);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileData.file.name;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    
+                    progressContainer.classList.remove('show');
+                    
+                } catch (error) {
+                    alert(`Failed to export file: ${error.message}`);
+                    document.getElementById('progress-container').classList.remove('show');
+                }
+            }
+
+            sanitizeFilename(name) {
+                return name.replace(/[/\\?%*:|"<>]/g, '-');
+            }
+
+            removeSingle(id) {
+                this.files = this.files.filter(f => f.id != id);
+                this.updateUI();
+                this.updateStats();
+            }
+
+            async exportAll() {
+                const zip = new JSZip();
+                const progressContainer = document.getElementById('progress-container');
+                const progressFill = document.getElementById('progress-fill');
+                const progressText = document.getElementById('progress-text');
+                
+                progressContainer.classList.add('show');
+                
+                for (let i = 0; i < this.files.length; i++) {
+                    const fileData = this.files[i];
+                    const metadata = fileData.editedMetadata || fileData.metadata;
+                    
+                    progressText.textContent = `Processing ${i + 1} of ${this.files.length}: ${fileData.file.name}`;
+                    const progress = Math.round(((i + 1) / this.files.length) * 100);
+                    progressFill.style.width = progress + '%';
+                    progressFill.textContent = progress + '%';
+                    
+                    try {
+                        // Write metadata to file
+                        const newFile = await this.writer.writeMetadata(fileData.file, metadata);
+                        zip.file(fileData.file.name, newFile);
+                    } catch (error) {
+                        console.error(`Failed to process ${fileData.file.name}:`, error);
+                        // Add original file if metadata writing fails
+                        zip.file(fileData.file.name, fileData.file);
+                    }
+                }
+                
+                progressText.textContent = 'Creating ZIP file...';
+                const blob = await zip.generateAsync({ type: 'blob' });
+                
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'music_with_metadata.zip';
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                progressContainer.classList.remove('show');
+            }
+
+            async exportFileWithMetadata(file, metadata) {
+                // For now, just download the file with renamed filename
+                // In a real implementation, you would write the metadata
+                const url = URL.createObjectURL(file);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${metadata.artist} - ${metadata.title}.${file.name.split('.').pop()}`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            clearAll() {
+                if (confirm('Are you sure you want to clear all files?')) {
+                    this.files = [];
+                    this.updateUI();
+                    this.updateStats();
+                }
+            }
+
+            updateStats() {
+                document.getElementById('total-files').textContent = this.files.length;
+                document.getElementById('edited-files').textContent = this.files.filter(f => f.editedMetadata).length;
+            }
+        }
+
+        // Initialize the app
+let app;
+window.addEventListener('DOMContentLoaded', () => {
+    app = new MetadataEditor();
+    window.app = app; // Make globally accessible
+});
+    </script>
+</body>
+</html>

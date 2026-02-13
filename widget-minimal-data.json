@@ -1,0 +1,8 @@
+{
+  "template": "widget-minimal",
+  "data": {
+    "isPlaying": false,
+    "trackTitle": "No track loaded",
+    "artist": "--"
+  }
+}

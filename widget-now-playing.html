@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 16px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            color: white;
+            font-family: system-ui, -apple-system, sans-serif;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        .widget-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .track-info {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        .album-art {
+            width: 60px;
+            height: 60px;
+            border-radius: 8px;
+            background: #333;
+            object-fit: cover;
+        }
+        .text-info {
+            flex: 1;
+            overflow: hidden;
+        }
+        .track-title {
+            font-size: 14px;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .track-artist {
+            font-size: 12px;
+            color: #888;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+        }
+        button {
+            background: rgba(220, 53, 69, 0.8);
+            border: none;
+            color: white;
+            width: 48px;
+            height: 48px;
+            border-radius: 24px;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        button:active {
+            background: rgba(220, 53, 69, 1);
+        }
+        .progress-bar {
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #dc3545;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="widget-container">
+        <div class="track-info">
+            <img id="album-art" class="album-art" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23333' width='100' height='100'/%3E%3Ctext x='50' y='55' font-size='40' text-anchor='middle' fill='%23666'%3E🎵%3C/text%3E%3C/svg%3E" alt="Album Art">
+            <div class="text-info">
+                <div id="track-title" class="track-title">No track loaded</div>
+                <div id="track-artist" class="track-artist">--</div>
+            </div>
+        </div>
+        
+        <div class="progress-bar">
+            <div id="progress-fill" class="progress-fill"></div>
+        </div>
+        
+        <div class="controls">
+            <button id="prev-btn" onclick="handlePrevious()">⏮️</button>
+            <button id="play-btn" onclick="handlePlayPause()">▶️</button>
+            <button id="next-btn" onclick="handleNext()">⏭️</button>
+        </div>
+    </div>
+    
+    <script>
+        // Widget state
+        let widgetState = {
+            isPlaying: false,
+            currentTrack: {
+                title: 'No track loaded',
+                artist: '--',
+                albumArt: null
+            },
+            progress: 0
+        };
+
+        // Service Worker communication
+        async function sendCommand(action) {
+            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({
+                    type: 'WIDGET_COMMAND',
+                    action: action
+                });
+            }
+        }
+
+        function handlePlayPause() {
+            sendCommand(widgetState.isPlaying ? 'PAUSE' : 'PLAY');
+        }
+
+        function handleNext() {
+            sendCommand('NEXT');
+        }
+
+        function handlePrevious() {
+            sendCommand('PREVIOUS');
+        }
+
+        // Listen for state updates from Service Worker
+        navigator.serviceWorker.addEventListener('message', (event) => {
+            if (event.data.type === 'STATE_UPDATE' || event.data.type === 'WIDGET_STATE_UPDATE') {
+                updateWidget(event.data.state);
+            }
+        });
+
+        function updateWidget(state) {
+            widgetState = state;
+            
+            // Update UI
+            document.getElementById('track-title').textContent = state.currentTrack.title;
+            document.getElementById('track-artist').textContent = state.currentTrack.artist;
+            document.getElementById('play-btn').textContent = state.isPlaying ? '⏸️' : '▶️';
+            document.getElementById('progress-fill').style.width = `${state.progress}%`;
+            
+            if (state.currentTrack.albumArt) {
+                document.getElementById('album-art').src = state.currentTrack.albumArt;
+            }
+        }
+
+        // Request initial state
+        window.addEventListener('load', () => {
+            sendCommand('GET_STATE');
+        });
+    </script>
+</body>
+</html>

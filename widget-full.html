@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Now Playing</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+            font-family: system-ui, -apple-system, sans-serif;
+            color: white;
+            padding: 16px;
+            min-height: 200px;
+        }
+        
+        .widget-full {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .track-info {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        
+        .album-art {
+            width: 72px;
+            height: 72px;
+            min-width: 72px;
+            border-radius: 8px;
+            background: #333;
+            object-fit: cover;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        }
+        
+        .album-art.placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+        }
+        
+        .text-info {
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .track-title {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: #fff;
+        }
+        
+        .track-artist {
+            font-size: 13px;
+            color: #aaa;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 2px;
+        }
+        
+        .track-album {
+            font-size: 11px;
+            color: #777;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .progress-container {
+            width: 100%;
+            background: #333;
+            height: 4px;
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 4px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #dc3545 0%, #ff7788 100%);
+            width: 0%;
+            transition: width 0.5s linear;
+        }
+        
+        .time-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: #666;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 12px;
+            margin-top: 4px;
+        }
+        
+        .control-btn {
+            background: rgba(220, 53, 69, 0.9);
+            border: none;
+            color: white;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        
+        .control-btn:active {
+            background: rgba(220, 53, 69, 1);
+            transform: scale(0.95);
+        }
+        
+        .control-btn.play {
+            width: 56px;
+            height: 56px;
+            font-size: 24px;
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        }
+        
+        .control-btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: 12px;
+            background: rgba(40, 167, 69, 0.2);
+            color: #28a745;
+            margin-top: 4px;
+        }
+        
+        .status-badge.paused {
+            background: rgba(220, 53, 69, 0.2);
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="widget-full">
+        <div class="track-info">
+            <div id="album-art" class="album-art placeholder">🎵</div>
+            <div class="text-info">
+                <div id="track-title" class="track-title">No track loaded</div>
+                <div id="track-artist" class="track-artist">--</div>
+                <div id="track-album" class="track-album">--</div>
+                <span id="status-badge" class="status-badge paused">⏸ Stopped</span>
+            </div>
+        </div>
+        
+        <div class="progress-container">
+            <div id="progress-fill" class="progress-fill"></div>
+        </div>
+        <div class="time-info">
+            <span id="current-time">0:00</span>
+            <span id="duration">0:00</span>
+        </div>
+        
+        <div class="controls">
+            <button class="control-btn" id="prev-btn" onclick="sendCommand('PREVIOUS')">⏮️</button>
+            <button class="control-btn play" id="play-btn" onclick="sendCommand('PLAY_PAUSE')">▶️</button>
+            <button class="control-btn" id="next-btn" onclick="sendCommand('NEXT')">⏭️</button>
+        </div>
+    </div>
+    
+    <script>
+        let widgetState = {
+            isPlaying: false,
+            currentTrack: {
+                title: 'No track loaded',
+                artist: '--',
+                album: '--',
+                albumArt: null
+            },
+            progress: 0,
+            currentTime: 0,
+            duration: 0
+        };
+        
+        function formatTime(seconds) {
+            if (!seconds || isNaN(seconds)) return '0:00';
+            const min = Math.floor(seconds / 60);
+            const sec = Math.floor(seconds % 60).toString().padStart(2, '0');
+            return `${min}:${sec}`;
+        }
+        
+        function sendCommand(action) {
+            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({
+                    type: 'WIDGET_COMMAND',
+                    action: action
+                });
+            } else {
+                window.open('/index.html', '_blank');
+            }
+        }
+        
+        function updateWidget(state) {
+            widgetState = state;
+            
+            // Update track info
+            document.getElementById('track-title').textContent = state.currentTrack.title || 'No track loaded';
+            document.getElementById('track-artist').textContent = state.currentTrack.artist || '--';
+            document.getElementById('track-album').textContent = state.currentTrack.album || '--';
+            
+            // Update album art
+            const artElement = document.getElementById('album-art');
+            if (state.currentTrack.albumArt) {
+                artElement.style.backgroundImage = `url(${state.currentTrack.albumArt})`;
+                artElement.style.backgroundSize = 'cover';
+                artElement.textContent = '';
+                artElement.classList.remove('placeholder');
+            } else {
+                artElement.style.backgroundImage = 'none';
+                artElement.textContent = '🎵';
+                artElement.classList.add('placeholder');
+            }
+            
+            // Update play button
+            document.getElementById('play-btn').textContent = state.isPlaying ? '⏸️' : '▶️';
+            
+            // Update status badge
+            const statusBadge = document.getElementById('status-badge');
+            if (state.currentTrack.title === 'No track loaded') {
+                statusBadge.textContent = '⏹ Stopped';
+                statusBadge.classList.add('paused');
+            } else if (state.isPlaying) {
+                statusBadge.textContent = '▶ Playing';
+                statusBadge.classList.remove('paused');
+            } else {
+                statusBadge.textContent = '⏸ Paused';
+                statusBadge.classList.add('paused');
+            }
+            
+            // Update progress
+            document.getElementById('progress-fill').style.width = `${state.progress || 0}%`;
+            document.getElementById('current-time').textContent = formatTime(state.currentTime || 0);
+            document.getElementById('duration').textContent = formatTime(state.duration || 0);
+        }
+        
+        // Listen for state updates
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('message', (event) => {
+                if (event.data.type === 'WIDGET_STATE_UPDATE') {
+                    updateWidget(event.data.state);
+                }
+            });
+            
+            // Register and request initial state
+            navigator.serviceWorker.register('/service-worker.js').then(() => {
+                setTimeout(() => {
+                    if (navigator.serviceWorker.controller) {
+                        navigator.serviceWorker.controller.postMessage({
+                            type: 'WIDGET_REQUEST_STATE'
+                        });
+                    }
+                }, 100);
+            }).catch(err => {
+                console.error('Service Worker registration failed:', err);
+            });
+        }
+        
+        // Periodic state refresh (every 2 seconds)
+        setInterval(() => {
+            if (navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({
+                    type: 'WIDGET_REQUEST_STATE'
+                });
+            }
+        }, 2000);
+    </script>
+</body>
+</html>

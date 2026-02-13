@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+    <title>Ultimate Offline Playlist Player</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="32x32" href="icon-192.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="icon-192.png">
+    <link rel="shortcut icon" href="icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    
+    <script src="gh-pages-config.js"></script>
+    <script src="chromeOS-detector.js"></script>
+    <script src="ui-manager.js"></script>
+    <script src="config-constants.js"></script>
+    
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="drop-zone">DROP FILES TO LOAD</div>
+    <div id="mode-indicator"></div>
+    
+    <!-- Collapsible Sidebar -->
+    <div id="sidebar" class="sidebar collapsed">
+        <button id="sidebar-toggle" class="sidebar-toggle">☰</button>
+        
+        <div class="sidebar-content">
+
+            <div class="sidebar-item">
+                <button id="crossfade-button" class="sidebar-btn" data-icon="🎚️" data-label="Crossfade" disabled>
+                    <span class="sidebar-icon">🎚️</span>
+                    <span class="sidebar-label">Crossfade Off</span>
+                </button>
+            </div>
+            
+            <div class="sidebar-item">
+                <button id="auto-eq-button" class="sidebar-btn" data-icon="🎛️" data-label="Auto-EQ" disabled>
+                    <span class="sidebar-icon">🎛️</span>
+                    <span class="sidebar-label">Auto-EQ Off</span>
+                </button>
+            </div>
+
+            <div class="sidebar-item">
+    <button id="volume-boost-button" class="sidebar-btn" data-icon="⚡" data-label="Volume Boost">
+        <span class="sidebar-icon">⚡</span>
+        <span class="sidebar-label">Boost Off</span>
+    </button>
+</div>
+            
+
+            <div class="sidebar-item">
+                <button id="debug-toggle" class="sidebar-btn" data-icon="🛠" data-label="Debug">
+                    <span class="sidebar-icon">🛠</span>
+                    <span class="sidebar-label">Debug</span>
+                </button>
+            </div>
+            
+            <div class="sidebar-item">
+                <button id="compact-toggle" class="sidebar-btn" data-icon="🔄" data-label="View">
+                    <span class="sidebar-icon">🔄</span>
+                    <span class="sidebar-label">Full View</span>
+                </button>
+            </div>
+            
+            <div class="sidebar-item">
+                <button id="pip-toggle" class="sidebar-btn" data-icon="📺" data-label="Float">
+                    <span class="sidebar-icon">📺</span>
+                    <span class="sidebar-label">Float</span>
+                </button>
+            </div>
+            
+            <div class="sidebar-item">
+                <button id="sticky-toggle" class="sidebar-btn" data-icon="📌" data-label="Sticky">
+                    <span class="sidebar-icon">📌</span>
+                    <span class="sidebar-label">Sticky Off</span>
+                </button>
+            </div>
+            
+            <div class="sidebar-item">
+                <button id="fullscreen-lyrics-toggle" class="sidebar-btn" data-icon="🎤" data-label="Lyrics">
+                    <span class="sidebar-icon">🎤</span>
+                    <span class="sidebar-label">Fullscreen Lyrics</span>
+                </button>
+            </div>
+
+            <div class="sidebar-item">
+                <label class="toggle-container">
+                    <input type="checkbox" id="auto-lyrics-toggle">
+                    <span class="sidebar-label">Auto-Fetch Lyrics</span>
+                </label>
+            </div>
+            
+            <div class="sidebar-item">
+                <button id="fullscreen-viz-toggle" class="sidebar-btn" data-icon="🌌" data-label="Visualizer">
+                    <span class="sidebar-icon">🌌</span>
+                    <span class="sidebar-label">Fullscreen Visualizer</span>
+                </button>
+            </div>
+
+            <div class="sidebar-item">
+    <button id="storage-stats-btn" class="sidebar-btn" data-icon="💾" data-label="Storage">
+        <span class="sidebar-icon">💾</span>
+        <span class="sidebar-label">Storage Info</span>
+    </button>
+</div>
+            
+            <div class="sidebar-item">
+                <button id="custom-bg-button" class="sidebar-btn" data-icon="🎨" data-label="Background">
+                    <span class="sidebar-icon">🎨</span>
+                    <span class="sidebar-label">Background</span>
+                </button>
+            </div>
+
+            <div class="sidebar-item">
+    <button id="clear-cache-btn" class="sidebar-btn">
+        <span class="sidebar-icon">🗑️</span>
+        <span class="sidebar-label">Clear Cache</span>
+    </button>
+</div>
+            
+            <div class="sidebar-item">
+                <button id="auto-lyrics-btn" class="sidebar-btn" data-icon="🎤" data-label="Auto Lyrics">
+                    <span class="sidebar-icon">🎤</span>
+                    <span class="sidebar-label">Auto-Fetch Lyrics</span>
+                </button>
+            </div>
+            
+            <div class="sidebar-item">
+                <button id="deep-analysis-btn" class="sidebar-btn" data-icon="🔍" data-label="Analysis">
+                    <span class="sidebar-icon">🔍</span>
+                    <span class="sidebar-label">Deep Analysis Tool</span>
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Main Content -->
+    <div id="main-content">
+        <h1>🎵 Ultimate Local Music Player</h1>
+        
+        <div id="metadata-container">
+            <button class="sticky-close" style="display: none;">✕</button>
+            <div id="cover-art-container">
+                <img id="cover-art" alt="Album Art">
+                <div id="cover-placeholder">🎵</div>
+            </div>
+            <div id="info-details">
+                <div class="label">Now Playing</div>
+                <div class="value" id="track-title">No track loaded</div>
+                <div class="label">Artist</div>
+                <div class="value" id="track-artist">--</div>
+                <div class="label">Album</div>
+                <div class="value" id="track-album">--</div>
+            </div>
+        </div>
+        
+        <!-- Progress Bar -->
+        <div id="custom-progress-container">
+            <div id="progress-bar"></div>
+        </div>
+        <div id="time-display">
+            <span id="current-time">0:00</span>
+            <span id="duration">0:00</span>
+        </div>
+        
+        <!-- Main Playback Controls -->
+        <div id="playback-controls">
+            <button id="shuffle-button" class="control-btn" disabled>
+                <span class="control-icon">🔀</span>
+            </button>
+            <button id="prev-button" class="control-btn" disabled>
+                <span class="control-icon">⏮️</span>
+            </button>
+            <button id="play-pause-button" class="control-btn control-btn-play">
+                <span class="control-icon">▶️</span>
+            </button>
+            <button id="next-button" class="control-btn" disabled>
+                <span class="control-icon">⏭️</span>
+            </button>
+            <button id="loop-button" class="control-btn" disabled>
+                <span class="control-icon">🔁</span>
+                <span class="control-label">Loop Off</span>
+            </button>
+        </div>
+        
+        <!-- File Loading Controls -->
+        <div id="file-controls">
+            <button id="load-button">📂 Load Music & Lyrics</button>
+            <button id="folder-button">📁 Select Music Folder</button>
+            <label id="auto-reload-label" style="display: none;">
+                <input type="checkbox" id="auto-reload-check" checked>
+            </label>
+            <button id="clear-folder-button" style="display: none;">🗑️ Forget Folder</button>
+        </div>
+        
+        <div id="playlist-status">Load music files to begin</div>
+        
+        <!-- Volume Control -->
+        <div id="volume-control">
+            <span id="volume-icon">🔊</span>
+            <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="1">
+            <span id="volume-percentage">100%</span>
+        </div>
+        
+        <!-- Equalizer -->
+        <div id="equalizer-control">
+            <div class="eq-header">
+                <span class="eq-title">🎛️ Equalizer</span>
+                <select id="eq-preset-select" class="eq-preset-dropdown">
+                    <option value="">Select Preset...</option>
+                </select>
+                <button id="eq-reset" class="eq-reset-btn">Reset</button>
+            </div>
+            <div class="eq-bands">
+                <div class="eq-band">
+                    <label class="eq-label">Bass</label>
+                    <input type="range" id="eq-bass" class="eq-slider" min="-12" max="12" step="0.5" value="0" orient="vertical">
+                    <span class="eq-value" id="bass-value">0 dB</span>
+                </div>
+                <div class="eq-band">
+                    <label class="eq-label">Mid</label>
+                    <input type="range" id="eq-mid" class="eq-slider" min="-12" max="12" step="0.5" value="0" orient="vertical">
+                    <span class="eq-value" id="mid-value">0 dB</span>
+                </div>
+                <div class="eq-band">
+                    <label class="eq-label">Treble</label>
+                    <input type="range" id="eq-treble" class="eq-slider" min="-12" max="12" step="0.5" value="0" orient="vertical">
+                    <span class="eq-value" id="treble-value">0 dB</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Lyrics Display -->
+        <div id="lyrics-display">
+            <button id="export-lyrics-button" disabled>📥 Export</button>
+            <div class="lyric-line">Lyrics will appear here when a track is loaded.</div>
+        </div>
+        
+        <!-- Visualizer -->
+        <div id="player-wrapper">
+            <canvas id="visualizer"></canvas>
+            <video id="audio-player" preload="metadata" crossorigin="anonymous"></video>
+        </div>
+        
+        <!-- Playlist -->
+        <div id="playlist-container">
+            <div id="playlist-header">
+                <h2>📋 Playlist</h2>
+                <button id="jump-to-current" disabled>🎯 Current</button>
+                <button id="clear-playlist" disabled>🗑️ Clear</button>
+            </div>
+            <input type="text" id="playlist-search" placeholder="🔍 Search playlist..." style="display: none;">
+            <div id="playlist-items">
+                <div class="empty-playlist">No tracks loaded yet. Click "Load Music & Lyrics" to get started!</div>
+            </div>
+        </div>
+        
+        <div id="debug-panel"></div>
+    </div>
+    
+    <!-- Hidden Elements -->
+    <video id="pip-video" muted playsinline style="display:none;"></video>
+    
+    <!-- Fullscreen Visualizer -->
+    <div id="fullscreen-visualizer" class="fullscreen-viz-hidden">
+        <div class="fullscreen-viz-controls">
+            <button id="viz-mode-btn" class="viz-control-btn">🎨 Mode: Bars</button>
+            <button id="viz-prev-btn" class="viz-control-btn">◀ Previous</button>
+            <button id="viz-play-pause-btn" class="viz-control-btn">⏸ Pause</button>
+            <button id="viz-next-btn" class="viz-control-btn">▶ Next</button>
+            <button id="viz-close-btn" class="viz-control-btn">✕ Close (ESC)</button>
+        </div>
+        <canvas id="fullscreen-viz-canvas"></canvas>
+        <div class="fullscreen-viz-info">
+            <div class="fullscreen-viz-title">No track loaded</div>
+            <div class="fullscreen-viz-artist">--</div>
+            <div class="fullscreen-viz-time">
+                <span id="viz-current-time">0:00</span> / <span id="viz-duration">0:00</span>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Fullscreen Lyrics -->
+    <div id="fullscreen-lyrics" class="fullscreen-lyrics-hidden">
+        <canvas id="fullscreen-lyrics-viz-canvas"></canvas>
+        <button class="fullscreen-lyrics-close" id="lyrics-close-btn">✕</button>
+        <div class="fullscreen-lyrics-content" id="fullscreen-lyrics-content">
+            <div class="fullscreen-lyrics-empty">No lyrics available</div>
+        </div>
+        <div class="fullscreen-lyrics-controls">
+            <button class="lyrics-control-btn" id="lyrics-prev-btn">◀ Previous</button>
+            <button class="lyrics-control-btn" id="lyrics-next-btn">Next ▶</button>
+        </div>
+    </div>
+    
+    <!-- DJ Mode Modal -->
+<div id="dj-modal" class="dj-modal">
+    <div class="dj-container">
+        <div class="dj-header">
+            <h2>🎧 DJ Mode</h2>
+            <button class="dj-close" id="dj-modal-close">×</button>
+        </div>
+        
+        <div class="dj-content">
+            <!-- Style Selection -->
+            <div class="dj-section">
+                <h3 style="margin-bottom: 20px; color: #fff;">Choose Your Mix Style</h3>
+                <div id="dj-styles-grid" class="dj-styles-grid">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Mix Visualization -->
+            <div id="dj-visualization" class="dj-visualization">
+                <div class="dj-viz-title">
+                    📊 Mix Analysis
+                </div>
+
+                <!-- Quality Stats -->
+                <div class="dj-viz-stats">
+                    <div class="dj-stat-box">
+                        <div class="dj-stat-label">Mix Quality</div>
+                        <div class="dj-stat-value" id="dj-mix-quality-value">--</div>
+                        <span id="dj-mix-quality-badge" class="dj-stat-quality">--</span>
+                    </div>
+                    <div class="dj-stat-box">
+                        <div class="dj-stat-label">Transitions</div>
+                        <div class="dj-stat-value" id="dj-transitions-count">--</div>
+                    </div>
+                    <div class="dj-stat-box">
+                        <div class="dj-stat-label">Avg BPM</div>
+                        <div class="dj-stat-value" id="dj-avg-bpm">--</div>
+                    </div>
+                    <div class="dj-stat-box">
+                        <div class="dj-stat-label">Avg Energy</div>
+                        <div class="dj-stat-value" id="dj-avg-energy">--</div>
+                    </div>
+                </div>
+
+                <!-- Energy and BPM Curves -->
+                <div class="dj-curves">
+                    <div class="dj-curve-container">
+                        <div class="dj-curve-title">Energy Flow</div>
+                        <canvas id="dj-energy-curve" class="dj-curve-canvas"></canvas>
+                    </div>
+                    <div class="dj-curve-container">
+                        <div class="dj-curve-title">BPM Progression</div>
+                        <canvas id="dj-bpm-curve" class="dj-curve-canvas"></canvas>
+                    </div>
+                </div>
+
+                <!-- Mood Flow -->
+                <div class="dj-mood-flow">
+                    <div class="dj-mood-title">Mood Journey</div>
+                    <div id="dj-mood-list">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Session Stats -->
+            <div id="dj-session-stats" class="dj-session-stats">
+                <div class="dj-session-title">📈 Current Session</div>
+                <div id="dj-session-info" class="dj-session-info">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <!-- Control Buttons -->
+            <div class="dj-controls">
+                <button id="dj-apply-button" class="dj-button" disabled>
+                    ✨ Apply Mix
+                </button>
+                <button id="dj-reorder-button" class="dj-button secondary" disabled style="display: none;">
+                    🔄 Reorder from Here
+                </button>
+                <button id="dj-disable-button" class="dj-button secondary" style="display: none;">
+                    ❌ Disable DJ Mode
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+    <!-- Folder History Modal -->
+<div id="folder-history-modal" style="display: none;">
+    <div class="folder-history-overlay"></div>
+    <div class="folder-history-content">
+        <div class="folder-history-header">
+            <h2>📁 Select a Folder</h2>
+            <button class="folder-history-close">✕</button>
+        </div>
+        <div class="folder-history-body">
+            <div class="folder-history-current" id="folder-history-current">
+                <!-- Current folder will be inserted here -->
+            </div>
+            <div class="folder-history-section">
+                <h3>Recent Folders</h3>
+                <div id="folder-history-list">
+                    <!-- History items will be inserted here -->
+                </div>
+            </div>
+            <div class="folder-history-actions">
+                <button id="folder-history-new" class="folder-history-btn primary">
+                    📂 Browse for New Folder
+                </button>
+                <button id="folder-history-clear" class="folder-history-btn secondary">
+                    🗑️ Clear History
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+    
+    <!-- Scripts -->
+    <script src="fullscreen-helper.js"></script>
+    <script src="performance-manager.js"></script>
+    <script src="worker-manager.js"></script>
+    <script src="image-optimizer.js"></script>
+    <script src="audio-buffer-manager.js"></script>
+    <script src="audio-presets-manager.js"></script>
+    <script src="visualizer-manager.js"></script>
+    <script src="metadata-parser.js"></script>
+    <script src="vtt-parser.js"></script>
+    <script src="error-recovery.js"></script>
+    <script src="metadata-editor.js"></script>
+    <script src="background-audio-handler.js"></script>
+    <script src="music-analyzer.js"></script>
+    <script src="crossfade-manager.js"></script>
+    <script src="auto-eq-manager.js"></script>
+    <script src="analysis-text-parser.js"></script>
+    <script src="custom-metadata-store.js"></script>
+    <script src="folder-persistence.js"></script>
+    <script src="volume-control.js"></script>
+    <script src="lyrics-manager.js"></script>
+    <script src="file-loading-manager.js"></script>
+    <script src="playlist-renderer.js"></script>
+    <script src="visualizer-ui-controller.js"></script>
+    <script src="script.js"></script>
+    <script src="mobile.js"></script>
+    <script src="sw-init.js"></script>
+    <script src="custom-background.js"></script>
+    
+    <!-- Sidebar functionality -->
+    <script>
+    // Sidebar toggle
+    const sidebar = document.getElementById('sidebar');
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+    
+    if (sidebarToggle && sidebar) {
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+        });
+    }
+    
+    // Preserve emoji icons when button text changes
+    // Override textContent setter for sidebar buttons
+    document.querySelectorAll('.sidebar-btn').forEach(btn => {
+        const originalTextContent = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+        const icon = btn.dataset.icon;
+        
+        Object.defineProperty(btn, 'textContent', {
+            set: function(value) {
+                // Update the label span instead of the entire button
+                const labelSpan = this.querySelector('.sidebar-label');
+                if (labelSpan) {
+                    labelSpan.textContent = value;
+                }
+            },
+            get: function() {
+                const labelSpan = this.querySelector('.sidebar-label');
+                return labelSpan ? labelSpan.textContent : '';
+            }
+        });
+    });
+    
+    // Play/pause button functionality
+    const playPauseButton = document.getElementById('play-pause-button');
+    const audioPlayer = document.getElementById('audio-player');
+    
+    if (playPauseButton && audioPlayer) {
+        playPauseButton.addEventListener('click', () => {
+            if (audioPlayer.paused) {
+                audioPlayer.play();
+            } else {
+                audioPlayer.pause();
+            }
+        });
+        
+        audioPlayer.addEventListener('play', () => {
+            playPauseButton.querySelector('.control-icon').textContent = '⏸️';
+        });
+        
+        audioPlayer.addEventListener('pause', () => {
+            playPauseButton.querySelector('.control-icon').textContent = '▶️';
+        });
+        
+        audioPlayer.addEventListener('ended', () => {
+            playPauseButton.querySelector('.control-icon').textContent = '▶️';
+        });
+    }
+    </script>
+</body>
+</html>

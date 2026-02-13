@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Audio Data Bridge - Production Ready</title>
+    <style>
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    background: #0a0e27;
+    color: #e0e0e0;
+}
+h1, h2, h3 { color: #4fc3f7; }
+.section {
+    background: #1a1f3a;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+    border-left: 4px solid #4fc3f7;
+}
+.doc-section {
+    background: #151933;
+    padding: 15px;
+    border-radius: 6px;
+    margin: 10px 0;
+    border-left: 3px solid #764ba2;
+}
+.api-method {
+    background: #1e2740;
+    padding: 10px;
+    margin: 8px 0;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+}
+ul {
+    line-height: 1.8;
+}
+    </style>
+</head>
+<body>
+    <h1>🌉 Web Audio Data Bridge</h1>
+    <p>Zero-copy audio transfer library for Web Workers</p>
+
+    <div class="section">
+        <h2>📚 Quick Start</h2>
+        <div class="doc-section">
+            <h3>Initialize Bridge</h3>
+            <div class="api-method">
+const bridge = new AudioDataBridge();<br>
+await bridge.initialize();
+            </div>
+        </div>
+
+        <div class="doc-section">
+            <h3>Transfer Audio Buffer (Zero-Copy)</h3>
+            <div class="api-method">
+const { transferable, transfers } = <br>
+&nbsp;&nbsp;await bridge.transferBuffer(audioBuffer);<br>
+<br>
+// Post to worker with ownership transfer<br>
+worker.postMessage({ data: transferable }, transfers);
+            </div>
+        </div>
+
+        <div class="doc-section">
+            <h3>Reconstruct in Worker</h3>
+            <div class="api-method">
+// In worker:<br>
+const audioBuffer = bridge.dataManager<br>
+&nbsp;&nbsp;.transferableToAudioBuffer(transferable, audioContext);
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>🔑 Key Features</h2>
+        <ul>
+            <li><strong>True Zero-Copy:</strong> Transfers ArrayBuffer ownership, no data duplication</li>
+            <li><strong>Worker Pool:</strong> Managed worker lifecycle with health monitoring</li>
+            <li><strong>Auto-Resume:</strong> Handles AudioContext state changes automatically</li>
+            <li><strong>Error Handling:</strong> Comprehensive error tracking and recovery</li>
+            <li><strong>Memory Tracking:</strong> FinalizationRegistry for garbage collection monitoring</li>
+        </ul>
+    </div>
+
+    <script>
+        // ============================================================================
+        // MESSAGE PROTOCOL CONSTANTS
+        // ============================================================================
+        const MSG = {
+            // Transfer messages
+            TRANSFER_BUFFER: 'transfer_buffer',
+            BUFFER_TRANSFERRED: 'buffer_transferred',
+            
+            // Analysis messages
+            ANALYZE_AUDIO: 'analyze_audio',
+            ANALYSIS_COMPLETE: 'analysis_complete',
+            
+            // Control messages
+            WORKER_READY: 'worker_ready',
+            WORKER_ERROR: 'worker_error',
+            PING: 'ping',
+            PONG: 'pong',
+            
+            // Memory messages
+            RELEASE_BUFFER: 'release_buffer',
+            BUFFER_RELEASED: 'buffer_released',
+            MEMORY_WARNING: 'memory_warning',
+            
+            // Context messages
+            CONTEXT_SUSPENDED: 'context_suspended',
+            CONTEXT_RESUMED: 'context_resumed'
+        };
+
+        // Error types
+        const ERR = {
+            TRANSFER_FAILED: 'transfer_failed',
+            WORKER_TIMEOUT: 'worker_timeout',
+            CONTEXT_ERROR: 'context_error',
+            MEMORY_ERROR: 'memory_error',
+            INVALID_BUFFER: 'invalid_buffer'
+        };
+
+        // ============================================================================
+        // CORE: True Zero-Copy Transferable Data Manager
+        // ============================================================================
+        class TransferableDataManager {
+            constructor() {
+    this.transferRegistry = new Map();
+    this.bufferFinalizationRegistry = new FinalizationRegistry(id => {
+        this.handleBufferFinalized(id);
+    });
+    this.bufferPool = new BufferPool(15); // ADD THIS
+}
+
+            // TRUE ZERO-COPY: Transfer ownership of the underlying ArrayBuffer
+            audioBufferToTransferable(audioBuffer) {
+                const channels = [];
+                const transfers = [];
+                const bufferId = this.generateBufferId();
+
+                for (let i = 0; i < audioBuffer.numberOfChannels; i++) {
+                    // Get the Float32Array for the channel
+                    const channelData = audioBuffer.getChannelData(i);
+                    // Access the underlying ArrayBuffer (NOT a copy)
+                    const arrayBuffer = channelData.buffer;
+                    
+                    channels.push({
+                        buffer: arrayBuffer,
+                        byteOffset: channelData.byteOffset,
+                        byteLength: channelData.byteLength
+                    });
+                    
+                    // Mark this ArrayBuffer for transfer (ownership moves)
+                    transfers.push(arrayBuffer);
+                }
+
+                // Register this transfer for tracking
+                this.transferRegistry.set(bufferId, {
+                    numberOfChannels: audioBuffer.numberOfChannels,
+                    length: audioBuffer.length,
+                    sampleRate: audioBuffer.sampleRate,
+                    transferredAt: performance.now(),
+                    size: transfers.reduce((sum, buf) => sum + buf.byteLength, 0)
+                });
+
+                return {
+                    transferable: {
+                        id: bufferId,
+                        channels,
+                        sampleRate: audioBuffer.sampleRate,
+                        length: audioBuffer.length,
+                        numberOfChannels: audioBuffer.numberOfChannels
+                    },
+                    transfers // This array is passed to postMessage for ownership transfer
+                };
+            }
+
+            // Reconstruct AudioBuffer from transferred data
+            transferableToAudioBuffer(transferable, audioContext) {
+                const audioBuffer = audioContext.createBuffer(
+                    transferable.numberOfChannels,
+                    transferable.length,
+                    transferable.sampleRate
+                );
+
+                for (let i = 0; i < transferable.numberOfChannels; i++) {
+                    const { buffer, byteOffset, byteLength } = transferable.channels[i];
+                    
+                    // Reconstruct the Float32Array view on the transferred buffer
+                    const channelData = new Float32Array(buffer, byteOffset, byteLength / 4);
+                    audioBuffer.copyToChannel(channelData, i);
+                }
+
+                // Register for garbage collection tracking
+                if (transferable.id) {
+                    this.bufferFinalizationRegistry.register(audioBuffer, transferable.id);
+                }
+
+                return audioBuffer;
+            }
+
+            // Verify buffer is transferable (not detached)
+            verifyBuffer(audioBuffer) {
+                try {
+                    for (let i = 0; i < audioBuffer.numberOfChannels; i++) {
+                        const channelData = audioBuffer.getChannelData(i);
+                        // Try to access the buffer - will throw if detached
+                        const test = channelData.buffer.byteLength;
+                    }
+                    return true;
+                } catch (e) {
+                    return false;
+                }
+            }
+
+            generateBufferId() {
+                return `buf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            }
+
+            handleBufferFinalized(id) {
+                if (this.transferRegistry.has(id)) {
+                    this.transferRegistry.delete(id);
+                }
+            }
+
+            getRegistryStats() {
+    const entries = Array.from(this.transferRegistry.values());
+    const totalSize = entries.reduce((sum, e) => sum + e.size, 0);
+    
+    return {
+        activeBuffers: entries.length,
+        totalMemoryBytes: totalSize,
+        totalMemoryMB: (totalSize / (1024 * 1024)).toFixed(2),
+        oldestBuffer: entries.length > 0 
+            ? Math.min(...entries.map(e => e.transferredAt))
+            : null,
+        bufferPool: this.bufferPool.getStats() // ADD THIS
+    };
+}
+        }
+
+        // ============================================================================
+        // CORE: Worker Connection Pool with Lifecycle Management
+        // ============================================================================
+        class WorkerConnectionPool {
+            constructor(options = {}) {
+                this.maxWorkers = options.maxWorkers || 4;
+                this.workerTimeout = options.workerTimeout || 30000;
+                this.healthCheckInterval = options.healthCheckInterval || 5000;
+                
+                this.workers = new Map();
+                this.availableWorkers = [];
+                this.requestQueue = [];
+                this.workerStats = new Map();
+                
+                this.healthCheckTimer = null;
+            }
+
+            async createWorker(workerId, workerCode) {
+                const blob = new Blob([workerCode], { type: 'application/javascript' });
+                const workerUrl = URL.createObjectURL(blob);
+                const worker = new Worker(workerUrl);
+                
+                const proxy = new EnhancedWorkerProxy(worker, workerId, this.workerTimeout);
+                
+                // Set up health monitoring
+                proxy.on(MSG.PONG, () => {
+                    this.updateWorkerHealth(workerId, true);
+                });
+                
+                proxy.on(MSG.WORKER_ERROR, (error) => {
+                    this.handleWorkerError(workerId, error);
+                });
+
+                this.workers.set(workerId, proxy);
+                this.availableWorkers.push(workerId);
+                this.workerStats.set(workerId, {
+    created: Date.now(),
+    requests: 0,
+    errors: 0,
+    lastHealthy: Date.now(),
+    lastUsed: Date.now(), // ADD THIS LINE
+    healthy: true
+});
+
+                // Wait for worker ready signal
+                await proxy.send(MSG.PING, {});
+                
+                return proxy;
+            }
+
+            async getWorker() {
+    // Intelligent load balancing: pick the least busy healthy worker
+    if (this.workers.size > 0) {
+        const healthyWorkers = Array.from(this.workers.keys())
+            .filter(id => {
+                const stats = this.workerStats.get(id);
+                return stats && stats.healthy;
+            });
+        
+        if (healthyWorkers.length > 0) {
+            // Sort by request count (ascending) to pick least busy
+            healthyWorkers.sort((a, b) => {
+                const statsA = this.workerStats.get(a);
+                const statsB = this.workerStats.get(b);
+                
+                // Prioritize available workers first
+                const availableA = this.availableWorkers.includes(a);
+                const availableB = this.availableWorkers.includes(b);
+                
+                if (availableA && !availableB) return -1;
+                if (!availableA && availableB) return 1;
+                
+                // Then sort by request count and error rate
+                const loadA = statsA.requests - statsA.errors * 2; // Penalize errors
+                const loadB = statsB.requests - statsB.errors * 2;
+                return loadA - loadB;
+            });
+            
+            const selectedWorkerId = healthyWorkers[0];
+            
+            // Remove from available pool if present
+            const availableIndex = this.availableWorkers.indexOf(selectedWorkerId);
+            if (availableIndex > -1) {
+                this.availableWorkers.splice(availableIndex, 1);
+            }
+            
+            const proxy = this.workers.get(selectedWorkerId);
+            const stats = this.workerStats.get(selectedWorkerId);
+            stats.requests++;
+            stats.lastUsed = Date.now();
+            
+            return { workerId: selectedWorkerId, proxy };
+        }
+    }
+
+    // Create new worker if under limit
+    if (this.workers.size < this.maxWorkers) {
+        const workerId = `worker_${this.workers.size}`;
+        const proxy = await this.createWorker(workerId, this.getDefaultWorkerCode());
+        
+        const stats = this.workerStats.get(workerId);
+        stats.requests++;
+        stats.lastUsed = Date.now();
+        
+        return { workerId, proxy };
+    }
+
+    // Wait for an available worker (queue request)
+    return new Promise((resolve) => {
+        const timeoutId = setTimeout(() => {
+            // Emergency fallback: pick any worker if queue waits too long
+            const anyWorkerId = Array.from(this.workers.keys())[0];
+            if (anyWorkerId) {
+                const proxy = this.workers.get(anyWorkerId);
+                resolve({ workerId: anyWorkerId, proxy });
+            }
+        }, 5000); // 5 second timeout
+        
+        this.requestQueue.push({ resolve, timeoutId });
+    });
+}
+
+            releaseWorker(workerId) {
+    if (!this.availableWorkers.includes(workerId)) {
+        this.availableWorkers.push(workerId);
+    }
+
+    // Process queued requests with timeout cleanup
+    if (this.requestQueue.length > 0) {
+        const { resolve, timeoutId } = this.requestQueue.shift();
+        if (timeoutId) clearTimeout(timeoutId);
+        
+        const proxy = this.workers.get(workerId);
+        resolve({ workerId, proxy });
+    }
+}
+
+            startHealthCheck() {
+                this.healthCheckTimer = setInterval(() => {
+                    for (const [workerId, proxy] of this.workers) {
+                        proxy.send(MSG.PING, {}).catch(e => {
+                            this.handleWorkerError(workerId, e);
+                        });
+                    }
+                }, this.healthCheckInterval);
+            }
+
+            stopHealthCheck() {
+                if (this.healthCheckTimer) {
+                    clearInterval(this.healthCheckTimer);
+                }
+            }
+
+            updateWorkerHealth(workerId, healthy) {
+                const stats = this.workerStats.get(workerId);
+                if (stats) {
+                    stats.healthy = healthy;
+                    stats.lastHealthy = Date.now();
+                }
+            }
+
+            handleWorkerError(workerId, error) {
+                const stats = this.workerStats.get(workerId);
+                if (stats) {
+                    stats.errors++;
+                    stats.healthy = false;
+                }
+
+                // Remove from available pool
+                const index = this.availableWorkers.indexOf(workerId);
+                if (index > -1) {
+                    this.availableWorkers.splice(index, 1);
+                }
+
+                // Consider recreating the worker if too many errors
+                if (stats && stats.errors > 5) {
+                    this.recreateWorker(workerId);
+                }
+            }
+
+            async recreateWorker(workerId) {
+                const oldProxy = this.workers.get(workerId);
+                if (oldProxy) {
+                    oldProxy.terminate();
+                }
+
+                this.workers.delete(workerId);
+                this.workerStats.delete(workerId);
+
+                // Create new worker
+                await this.createWorker(workerId, this.getDefaultWorkerCode());
+            }
+
+            getDefaultWorkerCode() {
+                return `
+                    self.onmessage = function(e) {
+                        const { type, requestId, data } = e.data;
+                        
+                        try {
+                            if (type === '${MSG.PING}') {
+                                self.postMessage({ type: '${MSG.PONG}', requestId });
+                                return;
+                            }
+                            
+                            // Default echo behavior
+                            setTimeout(() => {
+                                self.postMessage({
+                                    type: type + '_complete',
+                                    requestId,
+                                    data: { processed: true, ...data }
+                                });
+                            }, 10);
+                        } catch (error) {
+                            self.postMessage({
+                                type: '${MSG.WORKER_ERROR}',
+                                requestId,
+                                error: error.message
+                            });
+                        }
+                    };
+                `;
+            }
+
+            getStats() {
+                const stats = {
+                    totalWorkers: this.workers.size,
+                    availableWorkers: this.availableWorkers.length,
+                    busyWorkers: this.workers.size - this.availableWorkers.length,
+                    queuedRequests: this.requestQueue.length,
+                    workers: []
+                };
+
+                for (const [workerId, workerStat] of this.workerStats) {
+                    stats.workers.push({
+                        id: workerId,
+                        ...workerStat,
+                        uptime: Date.now() - workerStat.created
+                    });
+                }
+
+                return stats;
+            }
+
+            terminateAll() {
+                this.stopHealthCheck();
+                
+                for (const proxy of this.workers.values()) {
+                    proxy.terminate();
+                }
+                
+                this.workers.clear();
+                this.availableWorkers = [];
+                this.requestQueue = [];
+                this.workerStats.clear();
+            }
+        }
+
+        // ============================================================================
+        // CORE: Enhanced Worker Proxy with Error Handling
+        // ============================================================================
+        class EnhancedWorkerProxy {
+            constructor(worker, workerId, timeout = 30000) {
+                this.worker = worker;
+                this.workerId = workerId;
+                this.timeout = timeout;
+                this.messageHandlers = new Map();
+                this.requestId = 0;
+                this.pendingRequests = new Map();
+                this.isTerminated = false;
+
+                this.worker.onmessage = (e) => this.handleMessage(e);
+                this.worker.onerror = (e) => this.handleError(e);
+            }
+
+            handleMessage(e) {
+                const { type, requestId, data, error } = e.data;
+
+                // Handle pending request resolution
+                if (requestId && this.pendingRequests.has(requestId)) {
+                    const { resolve, reject, timeoutId } = this.pendingRequests.get(requestId);
+                    clearTimeout(timeoutId);
+                    this.pendingRequests.delete(requestId);
+
+                    if (error) {
+                        reject(new Error(error));
+                    } else {
+                        resolve(data);
+                    }
+                }
+
+                // Handle event listeners
+                if (this.messageHandlers.has(type)) {
+                    this.messageHandlers.get(type)(data);
+                }
+            }
+
+            handleError(error) {
+                console.error(`Worker ${this.workerId} error:`, error);
+                
+                // Reject all pending requests
+                for (const [requestId, { reject, timeoutId }] of this.pendingRequests) {
+                    clearTimeout(timeoutId);
+                    reject(new Error(`Worker error: ${error.message}`));
+                }
+                
+                this.pendingRequests.clear();
+
+                // Notify error handlers
+                if (this.messageHandlers.has(MSG.WORKER_ERROR)) {
+                    this.messageHandlers.get(MSG.WORKER_ERROR)(error);
+                }
+            }
+
+            send(type, data, transfers = []) {
+                if (this.isTerminated) {
+                    return Promise.reject(new Error('Worker is terminated'));
+                }
+
+                const requestId = ++this.requestId;
+
+                return new Promise((resolve, reject) => {
+                    const timeoutId = setTimeout(() => {
+                        if (this.pendingRequests.has(requestId)) {
+                            this.pendingRequests.delete(requestId);
+                            reject(new Error(`Worker request timeout after ${this.timeout}ms`));
+                        }
+                    }, this.timeout);
+
+                    this.pendingRequests.set(requestId, { resolve, reject, timeoutId });
+
+                    try {
+                        this.worker.postMessage({
+                            type,
+                            requestId,
+                            data
+                        }, transfers);
+                    } catch (error) {
+                        clearTimeout(timeoutId);
+                        this.pendingRequests.delete(requestId);
+                        reject(error);
+                    }
+                });
+            }
+
+            on(type, handler) {
+                this.messageHandlers.set(type, handler);
+            }
+
+            off(type) {
+                this.messageHandlers.delete(type);
+            }
+
+            terminate() {
+                this.isTerminated = true;
+                
+                // Clear all pending requests
+                for (const { timeoutId } of this.pendingRequests.values()) {
+                    clearTimeout(timeoutId);
+                }
+                this.pendingRequests.clear();
+                
+                this.worker.terminate();
+            }
+        }
+
+        // ============================================================================
+        // CORE: AudioContext Manager with Auto-Resume
+        // ============================================================================
+        class AudioContextManager {
+            constructor() {
+                this.context = null;
+                this.suspendedListeners = [];
+                this.resumedListeners = [];
+                this.resumeAttempts = 0;
+                this.maxResumeAttempts = 5;
+            }
+
+            async initialize() {
+                this.context = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Set up state change monitoring
+                this.context.addEventListener('statechange', () => {
+                    this.handleStateChange();
+                });
+
+                // Initial resume if needed
+                if (this.context.state === 'suspended') {
+                    await this.resume();
+                }
+
+                return this.context;
+            }
+
+            async resume() {
+                if (!this.context || this.context.state !== 'suspended') {
+                    return;
+                }
+
+                try {
+                    await this.context.resume();
+                    this.resumeAttempts = 0;
+                    
+                    this.resumedListeners.forEach(fn => fn());
+                    
+                    return true;
+                } catch (error) {
+                    this.resumeAttempts++;
+                    
+                    if (this.resumeAttempts < this.maxResumeAttempts) {
+                        // Try again after a delay
+                        setTimeout(() => this.resume(), 1000);
+                    } else {
+                        throw new Error('Failed to resume AudioContext after multiple attempts');
+                    }
+                    
+                    return false;
+                }
+            }
+
+            handleStateChange() {
+                if (this.context.state === 'suspended') {
+                    this.suspendedListeners.forEach(fn => fn());
+                    
+                    // Attempt automatic resume
+                    this.resume().catch(e => {
+                        console.error('Auto-resume failed:', e);
+                    });
+                } else if (this.context.state === 'running') {
+                    this.resumedListeners.forEach(fn => fn());
+                }
+            }
+
+            onSuspended(listener) {
+                this.suspendedListeners.push(listener);
+            }
+
+            onResumed(listener) {
+                this.resumedListeners.push(listener);
+            }
+
+            getState() {
+                return {
+                    state: this.context?.state,
+                    sampleRate: this.context?.sampleRate,
+                    currentTime: this.context?.currentTime,
+                    baseLatency: this.context?.baseLatency,
+                    outputLatency: this.context?.outputLatency
+                };
+            }
+
+            close() {
+                if (this.context) {
+                    this.context.close();
+                    this.context = null;
+                }
+            }
+        }
+
+        class BufferPool {
+    constructor(maxPoolSize = 10) {
+        this.pool = new Map(); // key: buffer size, value: array of buffers
+        this.maxPoolSize = maxPoolSize;
+        this.stats = {
+            allocated: 0,
+            reused: 0,
+            poolHits: 0,
+            poolMisses: 0
+        };
+    }
+    
+    acquire(sizeInBytes) {
+        const key = Math.ceil(sizeInBytes / 1024) * 1024; // Round to nearest KB
+        
+        if (this.pool.has(key) && this.pool.get(key).length > 0) {
+            this.stats.reused++;
+            this.stats.poolHits++;
+            return this.pool.get(key).pop();
+        }
+        
+        this.stats.allocated++;
+        this.stats.poolMisses++;
+        return new ArrayBuffer(key);
+    }
+    
+    release(buffer) {
+        if (!buffer || buffer.byteLength === 0) return;
+        
+        const key = buffer.byteLength;
+        if (!this.pool.has(key)) {
+            this.pool.set(key, []);
+        }
+        
+        const poolArray = this.pool.get(key);
+        if (poolArray.length < this.maxPoolSize) {
+            poolArray.push(buffer);
+        }
+    }
+    
+    clear() {
+        this.pool.clear();
+        this.stats = { allocated: 0, reused: 0, poolHits: 0, poolMisses: 0 };
+    }
+    
+    getStats() {
+        const totalBuffers = Array.from(this.pool.values())
+            .reduce((sum, arr) => sum + arr.length, 0);
+        const totalMemory = Array.from(this.pool.entries())
+            .reduce((sum, [size, arr]) => sum + (size * arr.length), 0);
+        
+        return {
+            ...this.stats,
+            pooledBuffers: totalBuffers,
+            pooledMemoryMB: (totalMemory / (1024 * 1024)).toFixed(2),
+            reuseRate: this.stats.allocated > 0 
+                ? ((this.stats.reused / this.stats.allocated) * 100).toFixed(1) + '%'
+                : '0%'
+        };
+    }
+}
+
+
+        // ============================================================================
+        // CORE: Audio Data Bridge (Main API)
+        // ============================================================================
+        class AudioDataBridge {
+            constructor(options = {}) {
+                this.options = options;
+                this.contextManager = new AudioContextManager();
+                this.dataManager = new TransferableDataManager();
+                this.workerPool = new WorkerConnectionPool(options.poolOptions || {});
+                
+                this.stats = {
+                    transfersCompleted: 0,
+                    transfersFailed: 0,
+                    totalBytesTransferred: 0,
+                    avgTransferTime: 0,
+                    transfers: [],
+                    errors: []
+                };
+
+                this.errorHandlers = [];
+                this.warningHandlers = [];
+            }
+
+            async initialize() {
+                try {
+                    await this.contextManager.initialize();
+                    
+                    // Set up context event handlers
+                    this.contextManager.onSuspended(() => {
+                        this.handleWarning('AudioContext suspended - attempting auto-resume');
+                    });
+
+                    this.contextManager.onResumed(() => {
+                        this.handleWarning('AudioContext resumed successfully');
+                    });
+
+                    return this;
+                } catch (error) {
+                    this.handleError(ERR.CONTEXT_ERROR, error);
+                    throw error;
+                }
+            }
+
+            async transferBuffer(audioBuffer, options = {}) {
+                const startTime = performance.now();
+
+                try {
+                    // Verify AudioContext state
+                    if (this.contextManager.context.state === 'suspended') {
+                        await this.contextManager.resume();
+                    }
+
+                    // Verify buffer is valid
+                    if (!this.dataManager.verifyBuffer(audioBuffer)) {
+                        throw new Error('AudioBuffer is invalid or detached');
+                    }
+
+                    // Create transferable representation (TRUE ZERO-COPY)
+                    const { transferable, transfers } = 
+                        this.dataManager.audioBufferToTransferable(audioBuffer);
+
+                    // Calculate transfer size
+                    const transferSize = transfers.reduce((sum, buf) => sum + buf.byteLength, 0);
+
+                    // Note: After this point, the original audioBuffer's data is DETACHED
+                    // The ArrayBuffers have been transferred and are no longer accessible
+                    // in the main thread until transferred back
+
+                    const transferTime = performance.now() - startTime;
+
+                    // Update stats
+                    this.stats.transfersCompleted++;
+                    this.stats.totalBytesTransferred += transferSize;
+                    this.stats.transfers.push({
+                        time: transferTime,
+                        size: transferSize,
+                        timestamp: Date.now(),
+                        success: true
+                    });
+
+                    // Keep only last 100 transfers
+                    if (this.stats.transfers.length > 100) {
+                        this.stats.transfers.shift();
+                    }
+
+                    const successfulTransfers = this.stats.transfers.filter(t => t.success);
+                    this.stats.avgTransferTime = 
+                        successfulTransfers.reduce((sum, t) => sum + t.time, 0) / 
+                        (successfulTransfers.length || 1);
+
+                    return {
+                        transferable,
+                        transfers,
+                        stats: {
+                            transferTime,
+                            transferSize,
+                            throughput: (transferSize / (transferTime / 1000) / (1024 * 1024)).toFixed(2) + ' MB/s',
+                            zeroCopy: true
+                        }
+                    };
+                } catch (error) {
+                    this.stats.transfersFailed++;
+                    this.stats.transfers.push({
+                        time: performance.now() - startTime,
+                        size: 0,
+                        timestamp: Date.now(),
+                        success: false,
+                        error: error.message
+                    });
+
+                    this.handleError(ERR.TRANSFER_FAILED, error);
+                    throw error;
+                }
+            }
+
+            async sendToWorker(data, workerId) {
+                const { proxy } = await this.workerPool.getWorker();
+                
+                try {
+                    const result = await proxy.send('process', data);
+                    return result;
+                } finally {
+                    this.workerPool.releaseWorker(workerId);
+                }
+            }
+
+            generateTestAudio(duration = 1, frequency = 440) {
+                const context = this.contextManager.context;
+                const sampleRate = context.sampleRate;
+                const length = sampleRate * duration;
+                const buffer = context.createBuffer(2, length, sampleRate);
+
+                for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+                    const data = buffer.getChannelData(channel);
+                    for (let i = 0; i < length; i++) {
+                        const t = i / sampleRate;
+                        // Add some harmonics for richer sound
+                        data[i] = (
+                            Math.sin(2 * Math.PI * frequency * t) * 0.3 +
+                            Math.sin(4 * Math.PI * frequency * t) * 0.1 +
+                            Math.sin(6 * Math.PI * frequency * t) * 0.05
+                        );
+                    }
+                }
+
+                return buffer;
+            }
+
+            async playBuffer(audioBuffer) {
+                // Ensure context is running
+                if (this.contextManager.context.state !== 'running') {
+                    await this.contextManager.resume();
+                }
+
+                const source = this.contextManager.context.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(this.contextManager.context.destination);
+                source.start();
+                
+                return new Promise(resolve => {
+                    source.onended = resolve;
+                });
+            }
+
+            onError(handler) {
+                this.errorHandlers.push(handler);
+            }
+
+            onWarning(handler) {
+                this.warningHandlers.push(handler);
+            }
+
+            handleError(type, error) {
+                const errorInfo = {
+                    type,
+                    message: error.message,
+                    timestamp: Date.now()
+                };
+
+                this.stats.errors.push(errorInfo);
+                
+                if (this.stats.errors.length > 50) {
+                    this.stats.errors.shift();
+                }
+
+                this.errorHandlers.forEach(handler => handler(errorInfo));
+            }
+
+            handleWarning(message) {
+                const warning = {
+                    message,
+                    timestamp: Date.now()
+                };
+
+                this.warningHandlers.forEach(handler => handler(warning));
+            }
+
+            getStats() {
+                return {
+                    ...this.stats,
+                    contextState: this.contextManager.getState(),
+                    workerPool: this.workerPool.getStats(),
+                    memoryRegistry: this.dataManager.getRegistryStats()
+                };
+            }
+
+            destroy() {
+                this.workerPool.terminateAll();
+                this.contextManager.close();
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "template": "widget-full",
+  "data": {
+    "isPlaying": false,
+    "trackTitle": "No track loaded",
+    "artist": "--",
+    "album": "--",
+    "albumArt": "",
+    "progress": 0,
+    "currentTime": "0:00",
+    "duration": "0:00"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Music Player Widget",
+  "short_name": "Music",
+  "widgets": [
+    {
+      "name": "now-playing",
+      "tag": "now-playing-widget",
+      "template": "widget-now-playing.html",
+      "ms_ac_template": "widget-now-playing-ac.json",
+      "auth": false,
+      "update": 30000
+    }
+  ]
+}
