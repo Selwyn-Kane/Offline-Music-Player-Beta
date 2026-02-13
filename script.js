@@ -1,11 +1,7 @@
 /* ============================================
-   Ultimate Local Music Player - Refactored
+   Ultimate Local Music Player - Complete Refactored Version
    ============================================ */
 
-/**
- * Main Music Player Application
- * Coordinates all subsystems and manages application state
- */
 class MusicPlayerApp {
     constructor() {
         this.state = {
@@ -17,81 +13,58 @@ class MusicPlayerApp {
             isSeekingProg: false,
             compactMode: 'full',
             folderHandle: null,
-            backgroundAnalysisRunning: false
+            backgroundAnalysisRunning: false,
+            visualizerEnabled: true
         };
 
         this.config = {
-            MAX_CACHE_SIZE: APP_CONFIG?.MAX_CACHE_SIZE || 100,
             PROGRESS_UPDATE_INTERVAL_MS: 200,
-            SEEK_DEBOUNCE_DELAY_MS: 100,
-            PROGRESS_EDGE_TOLERANCE: 0.02,
-            ANALYSIS_BATCH_SIZE: 3,
-            ANALYSIS_BATCH_DELAY_MS: 500
+            SEEK_DEBOUNCE_DELAY_MS: 100
         };
 
-        // Core managers (initialized in init())
         this.managers = {};
         this.elements = {};
-        
-        // Caches
         this.colorCache = new Map();
         window.colorCache = this.colorCache;
     }
 
-    /**
-     * Initialize the application
-     */
     async init() {
         try {
-            this.initializeElements();
+            this.cacheElements();
             await this.initializeManagers();
-            this.initializeAudioPipeline();
+            this.initializeAudio();
             this.setupEventListeners();
             await this.restoreState();
-            this.debugLog('✅ Music player initialized successfully', 'success');
+            this.debugLog('✅ Music player initialized', 'success');
         } catch (error) {
-            this.debugLog(`❌ Initialization error: ${error.message}`, 'error');
+            this.debugLog(`❌ Init error: ${error.message}`, 'error');
             console.error(error);
         }
     }
 
-    /**
-     * Cache DOM element references
-     */
-    initializeElements() {
+    cacheElements() {
         this.elements = {
             player: document.getElementById('audio-player'),
-            playlistStatus: document.getElementById('playlist-status'),
-            playlistItems: document.getElementById('playlist-items'),
-            
-            // Controls
             loadButton: document.getElementById('load-button'),
+            folderButton: document.getElementById('folder-button'),
             prevButton: document.getElementById('prev-button'),
             nextButton: document.getElementById('next-button'),
             shuffleButton: document.getElementById('shuffle-button'),
             loopButton: document.getElementById('loop-button'),
             clearButton: document.getElementById('clear-playlist'),
-            
-            // Display
-            coverArtContainer: document.getElementById('cover-art-container'),
+            playlistStatus: document.getElementById('playlist-status'),
+            playlistItems: document.getElementById('playlist-items'),
             coverArt: document.getElementById('cover-art'),
             coverPlaceholder: document.getElementById('cover-placeholder'),
             trackTitle: document.getElementById('track-title'),
             trackArtist: document.getElementById('track-artist'),
             trackAlbum: document.getElementById('track-album'),
-            metadataContainer: document.getElementById('metadata-container'),
-            lyricsDisplay: document.getElementById('lyrics-display'),
-            
-            // Progress
             progressContainer: document.getElementById('custom-progress-container'),
             progressBar: document.getElementById('progress-bar'),
             currentTimeDisplay: document.getElementById('current-time'),
             durationDisplay: document.getElementById('duration'),
-            
-            // Visualizer
+            lyricsDisplay: document.getElementById('lyrics-display'),
             canvas: document.getElementById('visualizer'),
-            
-            // Equalizer
             eqBassSlider: document.getElementById('eq-bass'),
             eqMidSlider: document.getElementById('eq-mid'),
             eqTrebleSlider: document.getElementById('eq-treble'),
@@ -99,26 +72,16 @@ class MusicPlayerApp {
             midValue: document.getElementById('mid-value'),
             trebleValue: document.getElementById('treble-value'),
             eqResetBtn: document.getElementById('eq-reset'),
-            
-            // Debug
             debugToggle: document.getElementById('debug-toggle'),
             debugPanel: document.getElementById('debug-panel'),
-            
-            // Other
-            dropZone: document.getElementById('drop-zone'),
-            exportLyricsButton: document.getElementById('export-lyrics-button'),
-            pipToggle: document.getElementById('pip-toggle')
+            dropZone: document.getElementById('drop-zone')
         };
 
-        // Get canvas context
         if (this.elements.canvas) {
             this.elements.canvasCtx = this.elements.canvas.getContext('2d');
         }
     }
 
-    /**
-     * Initialize all manager instances
-     */
     async initializeManagers() {
         const debugLog = this.debugLog.bind(this);
 
@@ -137,108 +100,116 @@ class MusicPlayerApp {
             if (typeof PerformanceManager !== 'undefined') {
                 this.managers.performance = new PerformanceManager(debugLog);
             }
-            
+
             if (typeof ImageOptimizer !== 'undefined') {
                 this.managers.imageOptimizer = new ImageOptimizer(debugLog);
             }
-            
+
             if (typeof AudioBufferManager !== 'undefined') {
                 this.managers.audioBuffer = new AudioBufferManager(debugLog);
             }
-            
+
             // Parsers
             if (typeof MetadataParser !== 'undefined') {
                 this.managers.metadata = new MetadataParser(debugLog);
             }
-            
+
             if (typeof VTTParser !== 'undefined') {
                 this.managers.vtt = new VTTParser(debugLog);
             }
-            
+
             if (typeof ErrorRecovery !== 'undefined') {
                 this.managers.errorRecovery = new ErrorRecovery(debugLog);
             }
-            
+
             if (typeof AnalysisTextParser !== 'undefined') {
                 this.managers.analysisParser = new AnalysisTextParser(debugLog);
             }
-            
+
             // Editors and analyzers
             if (typeof MetadataEditor !== 'undefined') {
                 this.managers.metadataEditor = new MetadataEditor(debugLog);
             }
-            
+
             if (typeof MusicAnalyzer !== 'undefined') {
                 this.managers.analyzer = new MusicAnalyzer(debugLog);
             }
-            
+
             // Storage
             if (typeof CustomMetadataStore !== 'undefined') {
                 this.managers.customMetadata = new CustomMetadataStore();
             }
-            
+
             if (typeof FolderPersistence !== 'undefined') {
                 this.managers.folderPersistence = new FolderPersistence();
             }
-            
-            // File loading
+
+            // File loading (CRITICAL)
             if (typeof EnhancedFileLoadingManager !== 'undefined') {
                 this.managers.fileLoading = new EnhancedFileLoadingManager(debugLog);
                 window.fileLoadingManager = this.managers.fileLoading;
             }
 
-            // Display storage stats
-            if (this.managers.folderPersistence && typeof this.managers.folderPersistence.getStats === 'function') {
-                const stats = await this.managers.folderPersistence.getStats();
-                if (stats) {
-                    this.debugLog(`💾 Storage: ${stats.percentUsed}% used | ${stats.historyCount} folders`, 'info');
-                    if (stats.hasSavedFolder) {
-                        this.debugLog(`📁 Saved: "${stats.folderName}" (${stats.trackCount} tracks)`, 'success');
-                    }
-                }
+            // Playlist renderer (CRITICAL)
+            if (typeof PlaylistRenderer !== 'undefined') {
+                this.managers.playlistRenderer = new PlaylistRenderer({
+                    playlistItems: this.elements.playlistItems,
+                    onTrackClick: (index) => this.loadTrack(index),
+                    onEditMetadata: (index) => this.editTrackMetadata(index),
+                    debugLog
+                });
+            }
+
+            // Lyrics manager (CRITICAL)
+            if (typeof LyricsManager !== 'undefined') {
+                this.managers.lyrics = new LyricsManager(
+                    this.elements.lyricsDisplay,
+                    this.elements.player,
+                    debugLog
+                );
+                window.lyricsManager = this.managers.lyrics;
             }
 
             this.debugLog('✅ All managers initialized', 'success');
         } catch (error) {
-            this.debugLog(`⚠️ Manager initialization warning: ${error.message}`, 'warning');
+            this.debugLog(`⚠️ Manager init warning: ${error.message}`, 'warning');
         }
     }
 
-    /**
-     * Initialize audio pipeline and related components
-     */
-    initializeAudioPipeline() {
+    initializeAudio() {
         try {
             if (typeof AudioPipeline !== 'undefined') {
                 this.managers.audioPipeline = new AudioPipeline(this.debugLog.bind(this));
                 window.audioPipeline = this.managers.audioPipeline;
             }
 
-            // Volume control
             if (typeof VolumeControl !== 'undefined' && this.elements.player) {
                 this.managers.volume = new VolumeControl(this.elements.player, this.debugLog.bind(this));
                 window.volumeControlInitialized = true;
             }
 
-            // Visualizer
             if (typeof VisualizerManager !== 'undefined') {
                 this.managers.visualizer = new VisualizerManager();
             }
 
-            // Background audio
+            if (typeof CrossfadeManager !== 'undefined') {
+                this.managers.crossfade = new CrossfadeManager(this.elements.player, this.debugLog.bind(this));
+            }
+
+            if (typeof AutoEQManager !== 'undefined') {
+                this.managers.autoEQ = new AutoEQManager(this.debugLog.bind(this));
+            }
+
             if (window.backgroundAudioHandler) {
                 this.initializeBackgroundAudio();
             }
 
-            this.debugLog('✅ Audio pipeline initialized', 'success');
+            this.debugLog('✅ Audio system initialized', 'success');
         } catch (error) {
-            this.debugLog(`⚠️ Audio pipeline warning: ${error.message}`, 'warning');
+            this.debugLog(`⚠️ Audio init warning: ${error.message}`, 'warning');
         }
     }
 
-    /**
-     * Initialize background audio handling
-     */
     async initializeBackgroundAudio() {
         try {
             const success = await backgroundAudioHandler.init({
@@ -253,56 +224,121 @@ class MusicPlayerApp {
 
             if (success) {
                 this.debugLog('✅ Background audio activated', 'success');
-            } else {
-                this.debugLog('⚠️ Background audio initialized with warnings', 'warning');
             }
         } catch (error) {
             this.debugLog(`⚠️ Background audio error: ${error.message}`, 'warning');
         }
     }
 
-    /**
-     * Setup all event listeners
-     */
     setupEventListeners() {
         // Player events
         this.elements.player.addEventListener('ended', () => this.handleTrackEnded());
-        this.elements.player.addEventListener('timeupdate', () => this.updateProgress());
+        this.elements.player.addEventListener('timeupdate', () => this.handleTimeUpdate());
         this.elements.player.addEventListener('loadedmetadata', () => this.handleMetadataLoaded());
         this.elements.player.addEventListener('error', (e) => this.handlePlayerError(e));
+        this.elements.player.addEventListener('play', () => this.handlePlay());
+        this.elements.player.addEventListener('pause', () => this.handlePause());
 
         // Control buttons
-        this.elements.loadButton?.addEventListener('click', () => this.loadMusicFolder());
-        this.elements.prevButton?.addEventListener('click', () => this.playPrevious());
-        this.elements.nextButton?.addEventListener('click', () => this.playNext());
-        this.elements.shuffleButton?.addEventListener('click', () => this.toggleShuffle());
-        this.elements.loopButton?.addEventListener('click', () => this.cycleLoopMode());
-        this.elements.clearButton?.addEventListener('click', () => this.clearPlaylist());
+        if (this.elements.loadButton) {
+            this.elements.loadButton.addEventListener('click', () => this.loadFiles());
+        }
+
+        if (this.elements.folderButton) {
+            this.elements.folderButton.addEventListener('click', () => this.loadFromFolder());
+        }
+
+        if (this.elements.prevButton) {
+            this.elements.prevButton.addEventListener('click', () => this.playPrevious());
+        }
+
+        if (this.elements.nextButton) {
+            this.elements.nextButton.addEventListener('click', () => this.playNext());
+        }
+
+        if (this.elements.shuffleButton) {
+            this.elements.shuffleButton.addEventListener('click', () => this.toggleShuffle());
+        }
+
+        if (this.elements.loopButton) {
+            this.elements.loopButton.addEventListener('click', () => this.cycleLoopMode());
+        }
+
+        if (this.elements.clearButton) {
+            this.elements.clearButton.addEventListener('click', () => this.clearPlaylist());
+        }
 
         // Progress bar
         if (this.elements.progressContainer) {
-            this.elements.progressContainer.addEventListener('click', (e) => this.handleProgressClick(e));
+            this.setupProgressBar();
         }
 
         // Equalizer
-        this.setupEqualizerListeners();
+        this.setupEqualizer();
 
         // Debug toggle
-        this.elements.debugToggle?.addEventListener('change', (e) => {
-            this.state.debugMode = e.target.checked;
-            this.elements.debugPanel?.classList.toggle('visible', this.state.debugMode);
-        });
-
-        // Drag and drop
-        this.setupDragAndDrop();
+        if (this.elements.debugToggle) {
+            this.elements.debugToggle.addEventListener('change', (e) => {
+                this.state.debugMode = e.target.checked;
+                if (this.elements.debugPanel) {
+                    this.elements.debugPanel.classList.toggle('visible', this.state.debugMode);
+                }
+            });
+        }
 
         this.debugLog('✅ Event listeners registered', 'success');
     }
 
-    /**
-     * Setup equalizer event listeners
-     */
-    setupEqualizerListeners() {
+    setupProgressBar() {
+        let seekDebounce = null;
+
+        this.elements.progressContainer.addEventListener('mousedown', (e) => {
+            clearTimeout(seekDebounce);
+            this.state.isSeekingProg = true;
+            const wasPlaying = !this.elements.player.paused;
+            this.elements.player.pause();
+
+            seekDebounce = setTimeout(() => {
+                if (wasPlaying) {
+                    this.elements.player.play().catch(err => 
+                        this.debugLog(`Resume error: ${err.message}`, 'error')
+                    );
+                }
+            }, this.config.SEEK_DEBOUNCE_DELAY_MS);
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!this.state.isSeekingProg) return;
+            this.updateProgressBar(e);
+        });
+
+        document.addEventListener('mouseup', (e) => {
+            if (!this.state.isSeekingProg) return;
+            this.state.isSeekingProg = false;
+            const newTime = this.updateProgressBar(e);
+            if (newTime !== null && !isNaN(newTime)) {
+                try {
+                    this.elements.player.currentTime = newTime;
+                } catch (err) {
+                    this.debugLog(`Seek failed: ${err.message}`, 'error');
+                }
+            }
+        });
+    }
+
+    updateProgressBar(e) {
+        const rect = this.elements.progressContainer.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        let percent = clickX / rect.width;
+        percent = Math.max(0, Math.min(1, percent));
+        
+        const newTime = percent * this.elements.player.duration;
+        this.elements.progressBar.style.width = `${percent * 100}%`;
+        this.elements.currentTimeDisplay.textContent = this.formatTime(newTime);
+        return newTime;
+    }
+
+    setupEqualizer() {
         const sliders = [
             { slider: this.elements.eqBassSlider, display: this.elements.bassValue, type: 'bass' },
             { slider: this.elements.eqMidSlider, display: this.elements.midValue, type: 'mid' },
@@ -314,383 +350,510 @@ class MusicPlayerApp {
             
             slider.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
-                if (display) display.textContent = `${value > 0 ? '+' : ''}${value}`;
+                if (display) display.textContent = `${value > 0 ? '+' : ''}${value} dB`;
                 this.updateEqualizer(type, value);
             });
         });
 
-        this.elements.eqResetBtn?.addEventListener('click', () => this.resetEqualizer());
-    }
-
-    /**
-     * Setup drag and drop functionality
-     */
-    setupDragAndDrop() {
-        if (!this.elements.dropZone) return;
-
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            this.elements.dropZone.addEventListener(eventName, (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-            });
-        });
-
-        ['dragenter', 'dragover'].forEach(eventName => {
-            this.elements.dropZone.addEventListener(eventName, () => {
-                this.elements.dropZone.classList.add('drag-over');
-            });
-        });
-
-        ['dragleave', 'drop'].forEach(eventName => {
-            this.elements.dropZone.addEventListener(eventName, () => {
-                this.elements.dropZone.classList.remove('drag-over');
-            });
-        });
-
-        this.elements.dropZone.addEventListener('drop', (e) => this.handleFileDrop(e));
-    }
-
-    /**
-     * Restore saved state from storage
-     */
-    async restoreState() {
-        try {
-            // Restore settings
-            const savedCrossfade = localStorage.getItem('crossfadeEnabled') === 'true';
-            const savedAutoEQ = localStorage.getItem('autoEQEnabled') === 'true';
-            const savedAutoLyrics = localStorage.getItem('autoLyricsEnabled') === 'true';
-
-            if (savedCrossfade && this.managers.crossfade) {
-                this.managers.crossfade.setEnabled(true);
-            }
-            if (savedAutoEQ && this.managers.autoEQ) {
-                this.managers.autoEQ.setEnabled(true);
-            }
-
-            // Restore playlist if available
-            const savedPlaylist = localStorage.getItem('musicPlayerPlaylist');
-            if (savedPlaylist) {
-                try {
-                    const data = JSON.parse(savedPlaylist);
-                    if (data.playlist && Array.isArray(data.playlist)) {
-                        this.state.playlist = data.playlist;
-                        this.state.currentTrackIndex = data.currentTrackIndex || -1;
-                        this.renderPlaylist();
-                    }
-                } catch (e) {
-                    this.debugLog('Failed to restore playlist', 'warning');
-                }
-            }
-
-            this.debugLog('✅ State restored', 'success');
-        } catch (error) {
-            this.debugLog(`⚠️ State restoration error: ${error.message}`, 'warning');
+        if (this.elements.eqResetBtn) {
+            this.elements.eqResetBtn.addEventListener('click', () => this.resetEqualizer());
         }
     }
 
-    /**
-     * Load music folder
-     */
-    async loadMusicFolder() {
+    async loadFiles() {
         try {
-            const dirHandle = await window.showDirectoryPicker();
-            this.state.folderHandle = dirHandle;
-
-            const tracks = await this.scanDirectory(dirHandle);
-            
-            if (tracks.length === 0) {
-                this.managers.ui?.showToast('No audio files found', 'warning');
+            if (!this.managers.fileLoading) {
+                this.managers.ui?.showToast('File loading manager not available', 'error');
                 return;
             }
 
-            this.state.playlist = tracks;
-            this.state.currentTrackIndex = -1;
+            // Use the file loading manager's method
+            const result = await this.managers.fileLoading.loadFiles();
             
-            // Save folder handle if persistence manager supports it
-            if (this.managers.folderPersistence && typeof this.managers.folderPersistence.saveFolder === 'function') {
-                try {
-                    await this.managers.folderPersistence.saveFolder(dirHandle, tracks);
-                } catch (error) {
-                    this.debugLog(`⚠️ Could not persist folder: ${error.message}`, 'warning');
+            if (result && result.success && result.playlist.length > 0) {
+                this.state.playlist = result.playlist;
+                this.state.currentTrackIndex = -1;
+                
+                this.updatePlaylist();
+                this.savePlaylistToStorage();
+                
+                this.managers.ui?.showToast(`Loaded ${result.playlist.length} tracks`, 'success');
+                this.debugLog(`✅ Loaded ${result.playlist.length} tracks`, 'success');
+
+                // Start background analysis
+                this.startBackgroundAnalysis();
+
+                // Auto-play first track if configured
+                if (result.playlist.length > 0) {
+                    this.loadTrack(0);
                 }
             }
-            
-            this.renderPlaylist();
-            this.savePlaylistToStorage();
-            
-            this.managers.ui?.showToast(`Loaded ${tracks.length} tracks`, 'success');
-            this.debugLog(`✅ Loaded ${tracks.length} tracks`, 'success');
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                this.debugLog(`❌ Error loading files: ${error.message}`, 'error');
+                this.managers.ui?.showToast('Error loading files', 'error');
+            }
+        }
+    }
 
-            // Start background analysis
-            this.startBackgroundAnalysis();
+    async loadFromFolder() {
+        try {
+            if (!('showDirectoryPicker' in window)) {
+                this.debugLog('Folder selection not supported', 'error');
+                this.managers.ui?.showToast('Folder selection not supported', 'error');
+                return;
+            }
+
+            const dirHandle = await window.showDirectoryPicker({
+                mode: 'read',
+                startIn: 'music'
+            });
+
+            this.state.folderHandle = dirHandle;
+            this.debugLog(`Folder selected: ${dirHandle.name}`, 'success');
+
+            if (!this.managers.fileLoading) {
+                this.debugLog('File loading manager not available', 'error');
+                return;
+            }
+
+            // Use fileLoadingManager to scan and load the folder
+            const result = await this.managers.fileLoading.loadFromFolderHandle(dirHandle);
+
+            if (result && result.success && result.playlist.length > 0) {
+                this.state.playlist = result.playlist;
+                this.state.currentTrackIndex = -1;
+
+                this.updatePlaylist();
+                this.savePlaylistToStorage();
+
+                // Update folder persistence
+                if (this.managers.folderPersistence && result.stats) {
+                    await this.managers.folderPersistence.updateMetadata({
+                        trackCount: result.stats.audioFiles,
+                        hasLyrics: result.stats.withLyrics > 0,
+                        hasAnalysis: result.stats.withAnalysis > 0,
+                        totalSize: result.stats.totalSize || 0
+                    });
+                }
+
+                this.managers.ui?.showToast(`Loaded ${result.playlist.length} tracks`, 'success');
+                this.debugLog(`✅ Loaded ${result.playlist.length} tracks from folder`, 'success');
+
+                // Start background analysis
+                this.startBackgroundAnalysis();
+
+                // Auto-play first track
+                if (result.playlist.length > 0) {
+                    this.loadTrack(0);
+                }
+            } else {
+                this.managers.ui?.showToast('No audio files found', 'warning');
+            }
         } catch (error) {
             if (error.name !== 'AbortError') {
                 this.debugLog(`❌ Error loading folder: ${error.message}`, 'error');
-                this.managers.ui?.showToast('Error loading folder', 'error');
+                this.managers.ui?.showToast(`Error loading folder: ${error.message}`, 'error');
             }
         }
     }
 
-    /**
-     * Scan directory for audio files
-     */
-    async scanDirectory(dirHandle) {
-        const tracks = [];
-        const supportedFormats = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'];
-
-        for await (const entry of dirHandle.values()) {
-            if (entry.kind === 'file') {
-                const fileName = entry.name.toLowerCase();
-                const isAudio = supportedFormats.some(ext => fileName.endsWith(ext));
-
-                if (isAudio) {
-                    const file = await entry.getFile();
-                    const audioURL = URL.createObjectURL(file);
-                    
-                    tracks.push({
-                        fileName: entry.name,
-                        audioURL,
-                        duration: 0,
-                        metadata: null,
-                        file
-                    });
-                }
-            }
-        }
-
-        return tracks.sort((a, b) => a.fileName.localeCompare(b.fileName));
-    }
-
-    /**
-     * Play track at index
-     */
-    async playTrack(index) {
+    async loadTrack(index) {
         if (index < 0 || index >= this.state.playlist.length) return;
 
-        try {
-            this.state.currentTrackIndex = index;
-            const track = this.state.playlist[index];
+        this.state.currentTrackIndex = index;
+        const track = this.state.playlist[index];
 
-            this.elements.player.src = track.audioURL;
-            await this.elements.player.play();
+        this.debugLog(`Loading track ${index + 1}: ${track.fileName}`, 'info');
 
-            this.updateNowPlaying(track);
-            this.renderPlaylist();
-            this.savePlaylistToStorage();
+        // Display metadata
+        if (track.metadata) {
+            this.displayMetadata(track.metadata);
+        } else {
+            this.clearMetadata();
+            this.elements.trackTitle.textContent = track.fileName;
+        }
 
-            // Update background audio
-            if (window.backgroundAudioHandler) {
-                backgroundAudioHandler.updateNowPlaying(track.metadata || {
-                    title: track.fileName,
-                    artist: 'Unknown Artist',
-                    album: 'Unknown Album'
-                });
+        // Apply track volume
+        if (this.managers.volume && track.metadata) {
+            const trackId = `${track.metadata.artist || 'Unknown'}_${track.metadata.title || track.fileName}`;
+            const hasAppliedSaved = this.managers.volume.applyTrackVolume(trackId);
+            if (!hasAppliedSaved && track.analysis) {
+                this.managers.volume.applyVolume(this.managers.volume.getVolume(), true, track.analysis);
+            }
+        }
+
+        // Apply Auto-EQ
+        if (this.managers.autoEQ && this.managers.autoEQ.enabled && track.analysis) {
+            this.managers.autoEQ.applyAutoEQ(track);
+        }
+
+        // Update visualizer
+        if (this.managers.visualizer) {
+            if (track.analysis) {
+                this.managers.visualizer.setTrackAnalysis(track.analysis);
+                this.debugLog(`🎨 Enhanced visualizer: BPM=${track.analysis.bpm}, Energy=${(track.analysis.energy * 100).toFixed(0)}%`, 'success');
+            } else {
+                this.managers.visualizer.clearTrackAnalysis();
+            }
+        }
+
+        // Load audio
+        if (this.managers.audioBuffer) {
+            const loadTrackIndex = index;
+            
+            // Clear previous buffer URL
+            if (this.elements.player.src && this.elements.player.src.startsWith('blob:')) {
+                URL.revokeObjectURL(this.elements.player.src);
             }
 
-            this.debugLog(`▶️ Playing: ${track.fileName}`, 'info');
-        } catch (error) {
-            this.debugLog(`❌ Playback error: ${error.message}`, 'error');
-            this.managers.ui?.showToast('Playback error', 'error');
+            this.managers.audioBuffer.getBuffer(loadTrackIndex).then(buffer => {
+                if (this.state.currentTrackIndex !== loadTrackIndex) {
+                    this.debugLog('Track changed during load, ignoring', 'warning');
+                    return;
+                }
+
+                const blob = new Blob([buffer], { type: 'audio/mpeg' });
+                const bufferUrl = URL.createObjectURL(blob);
+                this.elements.player.src = bufferUrl;
+                this.elements.player.load();
+
+                // Skip initial silence if detected
+                if (track.analysis?.silence?.start > 0.1) {
+                    const skipTime = track.analysis.silence.start;
+                    this.elements.player.currentTime = skipTime;
+                    this.debugLog(`⏭️ Skipped ${skipTime.toFixed(2)}s of silence`, 'success');
+                }
+
+                this.elements.player.play().catch(e => 
+                    this.debugLog(`Playback failed: ${e.message}`, 'warning')
+                );
+                
+                this.managers.audioBuffer.preloadUpcoming(loadTrackIndex);
+            }).catch(err => {
+                this.debugLog(`Buffer load failed, using direct URL: ${err.message}`, 'warning');
+                this.elements.player.src = track.audioURL;
+                this.elements.player.load();
+                this.elements.player.play().catch(e => 
+                    this.debugLog(`Direct playback failed: ${e.message}`, 'warning')
+                );
+            });
+        } else {
+            this.elements.player.src = track.audioURL;
+            this.elements.player.load();
+            this.elements.player.play().catch(e => 
+                this.debugLog(`Playback failed: ${e.message}`, 'warning')
+            );
+        }
+
+        // Load lyrics (VTT)
+        if (track.vtt && this.managers.vtt && this.managers.lyrics) {
+            this.debugLog(`Loading VTT: ${track.vtt.name}`, 'info');
+            
+            try {
+                const parsedCues = await this.managers.vtt.loadVTTFile(track.vtt);
+                this.managers.lyrics.loadLyrics(parsedCues);
+            } catch (err) {
+                this.debugLog(`VTT load failed: ${err.message}`, 'error');
+                this.managers.lyrics.clearLyrics();
+            }
+        } else if (this.managers.lyrics) {
+            this.managers.lyrics.clearLyrics();
+            this.debugLog(`No VTT file for ${track.fileName}`, 'warning');
+        }
+
+        // Update playlist highlight
+        if (this.managers.playlistRenderer) {
+            this.managers.playlistRenderer.updateHighlight(this.state.currentTrackIndex);
+        }
+
+        // Enable controls
+        if (this.elements.prevButton) this.elements.prevButton.disabled = false;
+        if (this.elements.nextButton) this.elements.nextButton.disabled = false;
+
+        // Update Media Session
+        this.updateMediaSession();
+    }
+
+    displayMetadata(metadata) {
+        if (!metadata) return;
+
+        this.elements.trackTitle.textContent = metadata.title || 'Unknown Title';
+        this.elements.trackArtist.textContent = metadata.artist || 'Unknown Artist';
+        this.elements.trackAlbum.textContent = metadata.album || 'Unknown Album';
+
+        if (metadata.image) {
+            this.elements.coverArt.src = metadata.image;
+            this.elements.coverArt.onload = () => {
+                this.elements.coverArt.classList.add('loaded');
+                this.elements.coverPlaceholder.style.display = 'none';
+            };
+            this.elements.coverArt.onerror = () => {
+                this.elements.coverArt.src = '';
+                this.elements.coverArt.classList.remove('loaded');
+                this.elements.coverPlaceholder.style.display = 'flex';
+            };
+        } else {
+            this.elements.coverArt.src = '';
+            this.elements.coverArt.classList.remove('loaded');
+            this.elements.coverPlaceholder.style.display = 'flex';
         }
     }
 
-    /**
-     * Play next track
-     */
+    clearMetadata() {
+        this.elements.trackTitle.textContent = 'No track loaded';
+        this.elements.trackArtist.textContent = '--';
+        this.elements.trackAlbum.textContent = '--';
+        this.elements.coverArt.src = '';
+        this.elements.coverArt.classList.remove('loaded');
+        this.elements.coverPlaceholder.style.display = 'flex';
+
+        if (this.managers.lyrics) {
+            this.managers.lyrics.clearLyrics();
+        }
+
+        if (this.managers.visualizer) {
+            this.managers.visualizer.clearTrackAnalysis();
+        }
+    }
+
+    updatePlaylist() {
+        if (this.managers.playlistRenderer) {
+            this.managers.playlistRenderer.setPlaylist(this.state.playlist, this.state.currentTrackIndex);
+            this.managers.playlistRenderer.render();
+        }
+
+        this.updatePlaylistStatus();
+    }
+
+    updatePlaylistStatus() {
+        const count = this.state.playlist.length;
+        if (this.elements.playlistStatus) {
+            this.elements.playlistStatus.textContent = 
+                `${count} track${count !== 1 ? 's' : ''} loaded ${this.state.isShuffled ? '(Shuffled)' : ''}`;
+        }
+
+        if (this.elements.clearButton) {
+            this.elements.clearButton.disabled = count === 0;
+        }
+        if (this.elements.shuffleButton) {
+            this.elements.shuffleButton.disabled = count === 0;
+        }
+        if (this.elements.loopButton) {
+            this.elements.loopButton.disabled = count === 0;
+        }
+    }
+
+    updateMediaSession() {
+        if ('mediaSession' in navigator && this.state.currentTrackIndex !== -1) {
+            const track = this.state.playlist[this.state.currentTrackIndex];
+            const metadata = track.metadata || {};
+
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: metadata.title || track.fileName,
+                artist: metadata.artist || 'Unknown Artist',
+                album: metadata.album || 'Unknown Album',
+                artwork: metadata.image ? [{ src: metadata.image, sizes: '512x512', type: 'image/png' }] : []
+            });
+
+            if (window.backgroundAudioHandler) {
+                backgroundAudioHandler.updateNowPlaying(metadata);
+            }
+        }
+    }
+
     playNext() {
         if (this.state.playlist.length === 0) return;
+
+        // Remember volume for current track
+        if (this.state.currentTrackIndex !== -1 && this.managers.volume) {
+            const track = this.state.playlist[this.state.currentTrackIndex];
+            const trackId = `${track.metadata?.artist || 'Unknown'}_${track.metadata?.title || track.fileName}`;
+            this.managers.volume.rememberTrackVolume(trackId, this.managers.volume.getVolume());
+        }
 
         let nextIndex;
         if (this.state.isShuffled) {
             nextIndex = Math.floor(Math.random() * this.state.playlist.length);
         } else {
-            nextIndex = (this.state.currentTrackIndex + 1) % this.state.playlist.length;
+            nextIndex = this.state.currentTrackIndex + 1;
+            if (nextIndex >= this.state.playlist.length) {
+                if (this.state.loopMode === 'all') {
+                    nextIndex = 0;
+                } else {
+                    this.debugLog('Playlist finished', 'info');
+                    return;
+                }
+            }
         }
 
-        this.playTrack(nextIndex);
+        this.loadTrack(nextIndex);
     }
 
-    /**
-     * Play previous track
-     */
     playPrevious() {
         if (this.state.playlist.length === 0) return;
 
-        const prevIndex = this.state.currentTrackIndex > 0
-            ? this.state.currentTrackIndex - 1
-            : this.state.playlist.length - 1;
+        // Remember volume for current track
+        if (this.state.currentTrackIndex !== -1 && this.managers.volume) {
+            const track = this.state.playlist[this.state.currentTrackIndex];
+            const trackId = `${track.metadata?.artist || 'Unknown'}_${track.metadata?.title || track.fileName}`;
+            this.managers.volume.rememberTrackVolume(trackId, this.managers.volume.getVolume());
+        }
 
-        this.playTrack(prevIndex);
-    }
-
-    /**
-     * Handle track ended
-     */
-    handleTrackEnded() {
-        switch (this.state.loopMode) {
-            case 'one':
-                this.elements.player.currentTime = 0;
-                this.elements.player.play();
-                break;
-            case 'all':
-                this.playNext();
-                break;
-            default:
-                if (this.state.currentTrackIndex < this.state.playlist.length - 1) {
-                    this.playNext();
-                }
+        if (this.state.currentTrackIndex > 0) {
+            this.loadTrack(this.state.currentTrackIndex - 1);
+        } else if (this.state.loopMode === 'all') {
+            this.loadTrack(this.state.playlist.length - 1);
         }
     }
 
-    /**
-     * Toggle shuffle
-     */
+    handleTrackEnded() {
+        if (this.state.loopMode === 'one') {
+            this.debugLog('Looping current track', 'info');
+            this.elements.player.currentTime = 0;
+            this.elements.player.play();
+        } else {
+            this.playNext();
+        }
+    }
+
     toggleShuffle() {
         this.state.isShuffled = !this.state.isShuffled;
-        this.elements.shuffleButton?.classList.toggle('active', this.state.isShuffled);
+        if (this.elements.shuffleButton) {
+            this.elements.shuffleButton.classList.toggle('active', this.state.isShuffled);
+        }
         
         const status = this.state.isShuffled ? 'on' : 'off';
         this.managers.ui?.showToast(`Shuffle ${status}`, 'info');
         this.debugLog(`🔀 Shuffle ${status}`, 'info');
+        this.updatePlaylistStatus();
     }
 
-    /**
-     * Cycle loop mode
-     */
     cycleLoopMode() {
         const modes = ['off', 'all', 'one'];
         const currentIndex = modes.indexOf(this.state.loopMode);
         this.state.loopMode = modes[(currentIndex + 1) % modes.length];
 
-        const icons = { off: '↻', all: '🔁', one: '🔂' };
+        const icons = { off: '🔁', all: '🔁', one: '🔂' };
         if (this.elements.loopButton) {
-            this.elements.loopButton.textContent = icons[this.state.loopMode];
+            const iconSpan = this.elements.loopButton.querySelector('.control-icon');
+            const labelSpan = this.elements.loopButton.querySelector('.control-label');
+            
+            if (iconSpan) iconSpan.textContent = icons[this.state.loopMode];
+            if (labelSpan) {
+                const labels = { off: 'Loop Off', all: 'Loop All', one: 'Loop One' };
+                labelSpan.textContent = labels[this.state.loopMode];
+            }
+            
             this.elements.loopButton.classList.toggle('active', this.state.loopMode !== 'off');
         }
 
         this.managers.ui?.showToast(`Loop: ${this.state.loopMode}`, 'info');
     }
 
-    /**
-     * Clear playlist
-     */
     clearPlaylist() {
         if (confirm('Clear entire playlist?')) {
-            this.state.playlist.forEach(track => URL.revokeObjectURL(track.audioURL));
+            if (this.managers.fileLoading) {
+                this.managers.fileLoading.cleanupPlaylist(this.state.playlist);
+            }
+
+            if (this.managers.audioBuffer) {
+                this.managers.audioBuffer.clearAllBuffers();
+            }
+
             this.state.playlist = [];
             this.state.currentTrackIndex = -1;
             
             this.elements.player.pause();
             this.elements.player.src = '';
             
-            this.renderPlaylist();
-            this.savePlaylistToStorage();
-            
-            this.managers.ui?.showToast('Playlist cleared', 'info');
+            this.clearMetadata();
+            this.updatePlaylist();
+
+            if (this.elements.prevButton) this.elements.prevButton.disabled = true;
+            if (this.elements.nextButton) this.elements.nextButton.disabled = true;
+
+            this.debugLog('Playlist cleared', 'warning');
         }
     }
 
-    /**
-     * Update progress display
-     */
-    updateProgress() {
-        if (this.state.isSeekingProg || !this.elements.player.duration) return;
+    handleTimeUpdate() {
+        if (this.state.isSeekingProg) return;
 
-        const current = this.elements.player.currentTime;
-        const duration = this.elements.player.duration;
-        const percent = (current / duration) * 100;
-
-        if (this.elements.progressBar) {
+        if (this.managers.performance?.shouldUpdate('progress') !== false) {
+            const percent = (this.elements.player.currentTime / this.elements.player.duration) * 100;
             this.elements.progressBar.style.width = `${percent}%`;
-        }
-        if (this.elements.currentTimeDisplay) {
-            this.elements.currentTimeDisplay.textContent = this.formatTime(current);
-        }
-        if (this.elements.durationDisplay && !this.elements.durationDisplay.textContent) {
-            this.elements.durationDisplay.textContent = this.formatTime(duration);
-        }
-    }
-
-    /**
-     * Handle progress bar click
-     */
-    handleProgressClick(e) {
-        if (!this.elements.player.duration) return;
-
-        const rect = this.elements.progressContainer.getBoundingClientRect();
-        const percent = (e.clientX - rect.left) / rect.width;
-        const seekTime = percent * this.elements.player.duration;
-
-        this.elements.player.currentTime = seekTime;
-    }
-
-    /**
-     * Update now playing display
-     */
-    updateNowPlaying(track) {
-        const metadata = track.metadata || {};
-        
-        if (this.elements.trackTitle) {
-            this.elements.trackTitle.textContent = metadata.title || track.fileName;
-        }
-        if (this.elements.trackArtist) {
-            this.elements.trackArtist.textContent = metadata.artist || 'Unknown Artist';
-        }
-        if (this.elements.trackAlbum) {
-            this.elements.trackAlbum.textContent = metadata.album || 'Unknown Album';
+            this.elements.currentTimeDisplay.textContent = this.formatTime(this.elements.player.currentTime);
         }
 
-        // Update cover art
-        if (metadata.coverArt) {
-            this.elements.coverArt.src = metadata.coverArt;
-            this.elements.coverArt.classList.remove('hidden');
-            this.elements.coverPlaceholder?.classList.add('hidden');
-        } else {
-            this.elements.coverArt?.classList.add('hidden');
-            this.elements.coverPlaceholder?.classList.remove('hidden');
+        if (this.managers.lyrics && this.managers.performance?.shouldUpdate('lyrics') !== false) {
+            const lyricsSettings = this.managers.performance?.getLyricsSettings() || {};
+            this.managers.lyrics.update(this.elements.player.currentTime, this.state.compactMode, lyricsSettings);
         }
     }
 
-    /**
-     * Render playlist
-     */
-    renderPlaylist() {
-        if (!this.elements.playlistItems) return;
+    handleMetadataLoaded() {
+        if (this.elements.durationDisplay) {
+            this.elements.durationDisplay.textContent = this.formatTime(this.elements.player.duration);
+        }
+    }
 
-        this.elements.playlistItems.innerHTML = '';
-
-        this.state.playlist.forEach((track, index) => {
-            const item = document.createElement('div');
-            item.className = 'playlist-item';
-            if (index === this.state.currentTrackIndex) {
-                item.classList.add('active');
+    handlePlay() {
+        if (this.managers.audioPipeline?.isInitialized) {
+            if (this.managers.audioPipeline.audioContext.state === 'suspended') {
+                this.managers.audioPipeline.resume();
             }
+        }
 
-            const title = track.metadata?.title || track.fileName;
-            const artist = track.metadata?.artist || 'Unknown Artist';
+        if (window.backgroundAudioHandler) {
+            backgroundAudioHandler.updatePlaybackState('playing');
+        }
 
-            item.innerHTML = `
-                <span class="track-number">${index + 1}</span>
-                <div class="track-info">
-                    <div class="track-title">${this.escapeHtml(title)}</div>
-                    <div class="track-artist">${this.escapeHtml(artist)}</div>
-                </div>
-            `;
+        if (this.managers.performance) {
+            this.managers.performance.setPlayState(true);
+        }
 
-            item.addEventListener('click', () => this.playTrack(index));
-            this.elements.playlistItems.appendChild(item);
-        });
+        this.updateMediaSession();
+    }
 
-        // Update status
-        if (this.elements.playlistStatus) {
-            this.elements.playlistStatus.textContent = 
-                `${this.state.playlist.length} track${this.state.playlist.length !== 1 ? 's' : ''}`;
+    handlePause() {
+        if (this.managers.audioPipeline?.isInitialized) {
+            if (this.managers.audioPipeline.audioContext.state === 'running') {
+                this.managers.audioPipeline.suspend();
+            }
+        }
+
+        if (window.backgroundAudioHandler) {
+            backgroundAudioHandler.updatePlaybackState('paused');
+        }
+
+        if (this.managers.performance) {
+            this.managers.performance.setPlayState(false);
+        }
+
+        if (this.managers.crossfade) {
+            this.managers.crossfade.cancelFade();
+        }
+
+        this.updateMediaSession();
+    }
+
+    handlePlayerError(e) {
+        if (this.state.currentTrackIndex === -1 || !this.state.playlist[this.state.currentTrackIndex]) return;
+
+        const trackInfo = this.state.playlist[this.state.currentTrackIndex];
+        
+        if (this.managers.errorRecovery) {
+            const errorInfo = this.managers.errorRecovery.handleAudioError(this.elements.player, trackInfo);
+            
+            if (errorInfo && !errorInfo.hasRecovery) {
+                alert(`Cannot play this track: ${errorInfo.errorMessage}`);
+            }
+        } else {
+            this.debugLog(`Player error: ${e.target.error?.message || 'Unknown'}`, 'error');
         }
     }
 
-    /**
-     * Update equalizer
-     */
     updateEqualizer(type, value) {
         if (!this.managers.audioPipeline?.isInitialized) return;
 
@@ -710,9 +873,6 @@ class MusicPlayerApp {
         }
     }
 
-    /**
-     * Reset equalizer
-     */
     resetEqualizer() {
         const sliders = [
             { slider: this.elements.eqBassSlider, display: this.elements.bassValue },
@@ -723,7 +883,7 @@ class MusicPlayerApp {
         sliders.forEach(({ slider, display }) => {
             if (slider) {
                 slider.value = 0;
-                if (display) display.textContent = '0';
+                if (display) display.textContent = '0 dB';
             }
         });
 
@@ -737,44 +897,10 @@ class MusicPlayerApp {
         this.managers.ui?.showToast('Equalizer reset', 'info');
     }
 
-    /**
-     * Handle file drop
-     */
-    async handleFileDrop(e) {
-        const items = Array.from(e.dataTransfer.items);
-        const tracks = [];
-
-        for (const item of items) {
-            if (item.kind === 'file') {
-                const file = item.getAsFile();
-                if (file && this.isAudioFile(file)) {
-                    const audioURL = URL.createObjectURL(file);
-                    tracks.push({
-                        fileName: file.name,
-                        audioURL,
-                        duration: 0,
-                        metadata: null,
-                        file
-                    });
-                }
-            }
-        }
-
-        if (tracks.length > 0) {
-            this.state.playlist.push(...tracks);
-            this.renderPlaylist();
-            this.savePlaylistToStorage();
-            this.managers.ui?.showToast(`Added ${tracks.length} track(s)`, 'success');
-        }
-    }
-
-    /**
-     * Start background analysis
-     */
     async startBackgroundAnalysis() {
         if (this.state.backgroundAnalysisRunning || this.state.playlist.length === 0) return;
         if (!this.managers.analyzer || typeof this.managers.analyzer.analyzeTrack !== 'function') {
-            this.debugLog('⚠️ Analyzer not available, skipping background analysis', 'warning');
+            this.debugLog('⚠️ Analyzer not available', 'warning');
             return;
         }
 
@@ -790,7 +916,7 @@ class MusicPlayerApp {
             return;
         }
 
-        const batchSize = this.config.ANALYSIS_BATCH_SIZE;
+        const batchSize = 3;
         let analyzedCount = 0;
 
         for (let i = 0; i < needsAnalysis.length; i += batchSize) {
@@ -815,12 +941,12 @@ class MusicPlayerApp {
             });
 
             await Promise.all(promises);
-            this.renderPlaylist();
+            this.updatePlaylist();
             
-            await new Promise(resolve => setTimeout(resolve, this.config.ANALYSIS_BATCH_DELAY_MS));
+            await new Promise(resolve => setTimeout(resolve, 500));
         }
 
-        if (analyzedCount > 0 && this.managers.analyzer && typeof this.managers.analyzer.saveAnalysesToStorage === 'function') {
+        if (analyzedCount > 0 && typeof this.managers.analyzer.saveAnalysesToStorage === 'function') {
             try {
                 this.managers.analyzer.saveAnalysesToStorage();
                 this.debugLog(`✅ Analyzed ${analyzedCount} tracks`, 'success');
@@ -832,55 +958,74 @@ class MusicPlayerApp {
         this.state.backgroundAnalysisRunning = false;
     }
 
-    /**
-     * Save playlist to storage
-     */
     savePlaylistToStorage() {
         try {
-            const data = {
-                playlist: this.state.playlist.map(track => ({
-                    fileName: track.fileName,
-                    duration: track.duration,
-                    metadata: track.metadata
-                })),
-                currentTrackIndex: this.state.currentTrackIndex
-            };
-            localStorage.setItem('musicPlayerPlaylist', JSON.stringify(data));
+            const playlistData = this.state.playlist.map(track => ({
+                fileName: track.fileName,
+                metadata: track.metadata,
+                hasVTT: !!track.vtt,
+                duration: track.duration
+            }));
+
+            localStorage.setItem('savedPlaylist', JSON.stringify(playlistData));
+            localStorage.setItem('playlistTimestamp', Date.now().toString());
+            this.debugLog(`Playlist saved: ${playlistData.length} tracks`, 'info');
         } catch (error) {
-            this.debugLog('Failed to save playlist', 'warning');
+            this.debugLog(`Failed to save playlist: ${error.message}`, 'error');
         }
     }
 
-    /**
-     * Handle metadata loaded
-     */
-    handleMetadataLoaded() {
-        if (this.elements.durationDisplay) {
-            this.elements.durationDisplay.textContent = 
-                this.formatTime(this.elements.player.duration);
+    async restoreState() {
+        try {
+            const savedCrossfade = localStorage.getItem('crossfadeEnabled') === 'true';
+            const savedAutoEQ = localStorage.getItem('autoEQEnabled') === 'true';
+
+            if (savedCrossfade && this.managers.crossfade) {
+                this.managers.crossfade.setEnabled(true);
+            }
+            if (savedAutoEQ && this.managers.autoEQ) {
+                this.managers.autoEQ.setEnabled(true);
+            }
+
+            this.debugLog('✅ State restored', 'success');
+        } catch (error) {
+            this.debugLog(`⚠️ State restoration error: ${error.message}`, 'warning');
         }
     }
 
-    /**
-     * Handle player error
-     */
-    handlePlayerError(e) {
-        this.debugLog(`Player error: ${e.target.error?.message || 'Unknown'}`, 'error');
-        this.managers.ui?.showToast('Playback error', 'error');
+    editTrackMetadata(index) {
+        const track = this.state.playlist[index];
+        if (!track || !this.managers.metadataEditor || !this.managers.customMetadata) return;
+
+        const currentMetadata = {
+            title: track.metadata?.title || track.fileName,
+            artist: track.metadata?.artist || 'Unknown Artist',
+            album: track.metadata?.album || 'Unknown Album'
+        };
+
+        this.managers.metadataEditor.openEditor(index, currentMetadata, (trackIndex, newMetadata) => {
+            const file = this.state.playlist[trackIndex].fileName;
+            const size = this.state.playlist[trackIndex].duration || 0;
+
+            this.managers.customMetadata.save(file, size, newMetadata);
+
+            this.state.playlist[trackIndex].metadata = {
+                ...this.state.playlist[trackIndex].metadata,
+                ...newMetadata,
+                hasMetadata: true
+            };
+
+            this.updatePlaylist();
+
+            if (trackIndex === this.state.currentTrackIndex) {
+                this.displayMetadata(this.state.playlist[trackIndex].metadata);
+            }
+
+            this.savePlaylistToStorage();
+            this.debugLog(`✅ Metadata updated for track ${trackIndex + 1}`, 'success');
+        });
     }
 
-    /**
-     * Utility: Check if file is audio
-     */
-    isAudioFile(file) {
-        const audioTypes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/m4a'];
-        return audioTypes.some(type => file.type.includes(type)) || 
-               /\.(mp3|wav|ogg|m4a|flac|aac)$/i.test(file.name);
-    }
-
-    /**
-     * Utility: Format time
-     */
     formatTime(seconds) {
         if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
         const mins = Math.floor(seconds / 60);
@@ -888,18 +1033,6 @@ class MusicPlayerApp {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
 
-    /**
-     * Utility: Escape HTML
-     */
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    /**
-     * Debug logging
-     */
     debugLog(message, type = 'info') {
         if (!this.state.debugMode && type !== 'error') return;
 
@@ -912,14 +1045,12 @@ class MusicPlayerApp {
 
         console.log(`${prefix} ${message}`);
 
-        // Add to debug panel if available
         if (this.elements.debugPanel && this.state.debugMode) {
             const entry = document.createElement('div');
             entry.className = `debug-entry debug-${type}`;
             entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
             this.elements.debugPanel.appendChild(entry);
-            
-            // Limit entries
+
             while (this.elements.debugPanel.children.length > 100) {
                 this.elements.debugPanel.removeChild(this.elements.debugPanel.firstChild);
             }
@@ -927,13 +1058,13 @@ class MusicPlayerApp {
     }
 }
 
-// Initialize app when DOM is ready
+// Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.musicPlayerApp = new MusicPlayerApp();
     window.musicPlayerApp.init();
 });
 
-// Expose for debugging
+// Expose helper for visualizer
 window.getAudioDataForVisualizer = () => {
     const app = window.musicPlayerApp;
     if (!app) return null;
