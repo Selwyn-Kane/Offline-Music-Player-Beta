@@ -34,6 +34,7 @@ let visualizerEnabled = true;
 let volumeControl = null;
 let visualizerManager = typeof VisualizerManager !== 'undefined' ? new VisualizerManager() : null;
 let fileLoadingManager = null;
+let audioPipeline = null;
 
 // Equalizer
 let bassFilter = null;
@@ -87,6 +88,9 @@ folderPersistence.getStats().then(stats => {
     uiManager = new UIManager(debugLog);
     window.uiManager = uiManager;
     debugLog('✅ UI Manager initialized', 'success');
+
+    audioPipeline = new AudioPipeline(debugLog);
+    window.audioPipeline = audioPipeline;
 
     analyzer = new MusicAnalyzer(debugLog);
 
@@ -491,7 +495,7 @@ if (typeof VisualizerUIController !== 'undefined') {
 getAudioData: () => {
     // Try multiple ways to get audio data
     if (analyser && dataArray) {
-        analyser.getByteFrequencyData(dataArray);
+        audioPipeline.getFrequencyData();
         return {
             dataArray: dataArray,
             bufferLength: bufferLength,
@@ -512,7 +516,7 @@ getAudioData: () => {
         bufferLength = analyser.frequencyBinCount || 256;
         dataArray = new Uint8Array(bufferLength);
         if (analyser.getByteFrequencyData) {
-            analyser.getByteFrequencyData(dataArray);
+            audioPipeline.getFrequencyData();
         }
         debugLog('⚠️ Created emergency dataArray for visualizer', 'warning');
         return {
@@ -599,236 +603,39 @@ getAudioData: () => {
    ============================================ */
 
 function setupAudioContext() {
-    console.log('setupAudioContext called, audioContext exists?', !!audioContext);
+    if (!audioPipeline) return;
     
-    // ✅ FIX: Always create dataArray if analyser exists
-    if (analyser && !dataArray) {
-        bufferLength = analyser.frequencyBinCount;
-        dataArray = new Uint8Array(bufferLength);
-        console.log('✅ Created dataArray for analyser');
-    }
+    const player = document.getElementById('audio-player');
+    audioPipeline.init(player);
     
-    // ✅ CRITICAL: If audioContext exists, we're already set up
-    if (audioContext) {
-        console.log('✅ Audio context already exists - skipping recreation');
-        
-        // ✅ NEW: Notify that audio context is ready (if not already notified)
-        if (!window.audioContextReadyFired) {
-            window.audioContextReadyFired = true;
-            document.dispatchEvent(new CustomEvent('audioContextReady'));
-            debugLog('📡 audioContextReady event fired', 'info');
-        }
-        
-        // ✅ FIX: Create managers if they don't exist (PWA mode fix)
-        if (!audioPresetsManager && bassFilter && midFilter && trebleFilter) {
-            try {
-                audioPresetsManager = new AudioPresetsManager(bassFilter, midFilter, trebleFilter, debugLog);
-                audioPresetsManager.loadSavedPreset();
-                debugLog('✅ Audio presets manager initialized (late)', 'success');
-                populatePresetDropdown();
-                if (audioContext && !window.audioContextReadyFired) {
-            window.audioContextReadyFired = true;
-            document.dispatchEvent(new CustomEvent('audioContextReady'));
-            debugLog('📡 audioContextReady event fired', 'info');
-        }
-            } catch (err) {
-                debugLog(`⚠️ Failed to init presets manager: ${err.message}`, 'warning');
-            }
-        }
-        
-        if (!autoEQManager && audioPresetsManager) {
-            try {
-                autoEQManager = new AutoEQManager(audioPresetsManager, debugLog);
-                debugLog('✅ Auto-EQ system initialized (late)', 'success');
-            } catch (err) {
-                debugLog(`⚠️ Failed to init Auto-EQ: ${err.message}`, 'warning');
-            }
-        }
-        
-        if (!crossfadeManager) {
-            try {
-                crossfadeManager = new CrossfadeManager(audioContext, debugLog);
-                debugLog('✅ Crossfade system initialized (late)', 'success');
-            } catch (err) {
-                debugLog(`⚠️ Failed to init crossfade: ${err.message}`, 'warning');
-            }
-        }
-        
-        // ✅ NEW: Initialize visualizer if it hasn't been initialized yet
-        if (visualizerManager && !visualizerManager.canvas && canvas && analyser && dataArray) {
-            visualizerManager.initMainVisualizer(canvas, analyser, dataArray, bufferLength);
-            debugLog('✅ Audio visualizer initialized (late)', 'success');
-        }
-        
-        // ✅ ALWAYS return - never recreate audio context or source
-        return;
-    }
-    
-    try {
-        // ✅ FIX: Force user interaction before creating AudioContext in PWA mode
-        const isHttps = window.location.protocol === 'https:';
-        const isPWA = window.matchMedia('(display-mode: standalone)').matches;
-        
-        if (isHttps || isPWA) {
-            console.log('🔒 HTTPS/PWA mode - ensuring user interaction');
-        }
-        
-        // ✅ Check if background-audio-handler already created everything
-        if (window.sharedAudioContext && window.sharedAnalyser && window.sharedAudioSource) {
-            debugLog('✅ Using audio system from background-audio-handler', 'success');
-            audioContext = window.sharedAudioContext;
-            analyser = window.sharedAnalyser;
-            audioSource = window.sharedAudioSource;
-            bassFilter = window.sharedBassFilter;
-            midFilter = window.sharedMidFilter;
-            trebleFilter = window.sharedTrebleFilter;
-            
-            bufferLength = analyser.frequencyBinCount;
-            dataArray = new Uint8Array(bufferLength);
-            
-        } else {
-            // Create our own audio context (first time only)
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            
-            // ✅ PWA FIX: Resume immediately if suspended
-            if (audioContext.state === 'suspended') {
-                console.log('⚠️ AudioContext suspended, resuming...');
-                audioContext.resume().catch(err => {
-                    console.error('❌ Failed to resume:', err);
-                });
-            }
-            
-            analyser = audioContext.createAnalyser();
-            analyser.fftSize = APP_CONFIG.FFT_SIZE;
-            bufferLength = analyser.frequencyBinCount;
-            dataArray = new Uint8Array(bufferLength);
-            
-            // Create equalizer filters
-            bassFilter = audioContext.createBiquadFilter();
-            bassFilter.type = 'lowshelf';
-            bassFilter.frequency.value = APP_CONFIG.BASS_FREQ_HZ;
-            bassFilter.gain.value = 0;
-            
-            midFilter = audioContext.createBiquadFilter();
-            midFilter.type = 'peaking';
-            midFilter.frequency.value = APP_CONFIG.MID_FREQ_HZ;
-            midFilter.Q.value = 1;
-            midFilter.gain.value = 0;
-            
-            trebleFilter = audioContext.createBiquadFilter();
-            trebleFilter.type = 'highshelf';
-            trebleFilter.frequency.value = APP_CONFIG.TREBLE_FREQ_HZ;
-            trebleFilter.gain.value = 0;
-            
-            // ✅ CRITICAL: Only create source if it doesn't exist globally
-            if (!window.sharedAudioSource) {
-                try {
-                    audioSource = audioContext.createMediaElementSource(player);
-                    window.sharedAudioSource = audioSource;
-                    console.log('✅ Created NEW audio source (first time)');
-                } catch (error) {
-                    console.warn('⚠️ Audio source already exists, reusing:', error.message);
-                    audioSource = window.sharedAudioSource;
-                }
-            } else {
-                audioSource = window.sharedAudioSource;
-                console.log('✅ Reusing existing audio source');
-            }
-            
-            // Connect with volume control and compression integrated
-            if (window.volumeGainNode && window.volumeCompressor && window.volumeMakeupGain) {
-                // Chain: source → bass → mid → treble → gain → compressor → makeup → analyser → output
-                audioSource.connect(bassFilter);
-                bassFilter.connect(midFilter);
-                midFilter.connect(trebleFilter);
-                trebleFilter.connect(window.volumeGainNode);
-                window.volumeGainNode.connect(window.volumeCompressor);
-                window.volumeCompressor.connect(window.volumeMakeupGain);
-                window.volumeMakeupGain.connect(analyser);
-                analyser.connect(audioContext.destination);
-                
-                debugLog('✅ Audio chain connected WITH volume control & compression', 'success');
-            } else {
-                // Fallback: simple chain (volume control not ready yet)
-                audioSource.connect(bassFilter);
-                bassFilter.connect(midFilter);
-                midFilter.connect(trebleFilter);
-                trebleFilter.connect(analyser);
-                analyser.connect(audioContext.destination);
-                
-                debugLog('✅ Audio chain connected WITHOUT volume control (will reconnect later)', 'info');
-            }
-            
-            // ✅ CROSSFADE INIT (inside else block, after audio chain)
-            if (crossfadeManager && !crossfadeManager.isInitialized) {
-                crossfadeManager.initAudioNodes();
-                
-                // Reconnect audio chain with crossfade
-                if (window.volumeGainNode) {
-                    // treble → crossfade → volume → compressor → makeup → analyser → output
-                    trebleFilter.disconnect();
-                    crossfadeManager.connectToAudioChain(trebleFilter, window.volumeGainNode);
-                } else {
-                    // treble → crossfade → analyser → output
-                    trebleFilter.disconnect();
-                    crossfadeManager.connectToAudioChain(trebleFilter, analyser);
-                }
-            }
-        }
-        
-        // Share globally
-        window.sharedAudioContext = audioContext;
-        window.sharedAnalyser = analyser;
-        window.sharedDataArray = dataArray; 
-        window.sharedBufferLength = bufferLength;
-        window.sharedBassFilter = bassFilter;
-        window.sharedMidFilter = midFilter;
-        window.sharedTrebleFilter = trebleFilter;
-        
-        // Initialize visualizer
-        if (analyser && canvas && dataArray) {
-            if (!visualizerManager && typeof VisualizerManager !== 'undefined') {
-                visualizerManager = new VisualizerManager();
-            }
-            if (visualizerManager) {
-                visualizerManager.initMainVisualizer(canvas, analyser, dataArray, bufferLength);
-                visualizerManager.start();
-                debugLog('Audio visualizer initialized', 'success');
-            }
-        }
-        
-        // Apply performance settings
-        const vizSettings = perfManager.getVisualizerSettings();
-        analyser.fftSize = vizSettings.fftSize;
-        
-        // Initialize other components
-        setupEqualizerControls();
-        
+    // Sync local variables with pipeline
+    audioContext = audioPipeline.audioContext;
+    analyser = audioPipeline.analyser;
+    audioSource = audioPipeline.audioSource;
+    bassFilter = audioPipeline.bassFilter;
+    midFilter = audioPipeline.midFilter;
+    trebleFilter = audioPipeline.trebleFilter;
+    dataArray = audioPipeline.dataArray;
+    bufferLength = audioPipeline.bufferLength;
+
+    // Initialize managers if they don't exist
+    if (!audioPresetsManager && bassFilter && midFilter && trebleFilter) {
         audioPresetsManager = new AudioPresetsManager(bassFilter, midFilter, trebleFilter, debugLog);
         audioPresetsManager.loadSavedPreset();
-        
-        if (!autoEQManager) {
-            autoEQManager = new AutoEQManager(audioPresetsManager, debugLog);
-        }
-        
         populatePresetDropdown();
-        
-        if (!crossfadeManager) {
-            crossfadeManager = new CrossfadeManager(audioContext, debugLog);
-        }
-        
-    } catch (error) {
-        debugLog(`Audio setup failed: ${error.message}`, 'error');
-        
-        // Still try to create dataArray
-        if (analyser && !dataArray) {
-            try {
-                bufferLength = analyser.frequencyBinCount || 256;
-                dataArray = new Uint8Array(bufferLength);
-            } catch (e) {
-                debugLog('❌ Could not create fallback dataArray', 'error');
-            }
-        }
+    }
+    
+    if (!autoEQManager && audioPresetsManager) {
+        autoEQManager = new AutoEQManager(audioPresetsManager, debugLog);
+    }
+    
+    if (!crossfadeManager && audioContext) {
+        crossfadeManager = new CrossfadeManager(audioContext, debugLog);
+    }
+
+    // Initialize visualizer
+    if (visualizerManager && !visualizerManager.canvas && canvas && analyser && dataArray) {
+        visualizerManager.initMainVisualizer(canvas, analyser, dataArray, bufferLength);
     }
 }
 
@@ -836,37 +643,9 @@ function setupAudioContext() {
  * âœ… NEW FUNCTION: Reconnect audio chain when volume control initializes late
  */
 function reconnectAudioChainWithVolumeControl() {
-    if (!audioContext || !audioSource || !bassFilter || !midFilter || !trebleFilter || !analyser) {
-        debugLog('âŒ Cannot reconnect - audio chain not initialized', 'error');
-        return false;
-    }
-    
-    if (!window.volumeGainNode || !window.volumeCompressor || !window.volumeMakeupGain) {
-        debugLog('âŒ Cannot reconnect - volume control nodes not ready', 'error');
-        return false;
-    }
-    
-    try {
-        // Disconnect old connections
-        trebleFilter.disconnect();
-        if (window.volumeGainNode) window.volumeGainNode.disconnect();
-        if (window.volumeCompressor) window.volumeCompressor.disconnect();
-        if (window.volumeMakeupGain) window.volumeMakeupGain.disconnect();
-        analyser.disconnect();
-        
-        // Reconnect with proper order
-        trebleFilter.connect(window.volumeGainNode);
-        window.volumeGainNode.connect(window.volumeCompressor);
-        window.volumeCompressor.connect(window.volumeMakeupGain);
-        window.volumeMakeupGain.connect(analyser);
-        analyser.connect(audioContext.destination);
-        
-        debugLog('âœ… Audio chain reconnected with volume control', 'success');
-        return true;
-    } catch (err) {
-        debugLog(`âŒ Failed to reconnect audio chain: ${err.message}`, 'error');
-        return false;
-    }
+    if (!audioPipeline) return false;
+    audioPipeline.connectNodes();
+    return true;
 }
         
 function startVisualizer() {
@@ -954,7 +733,7 @@ player.addEventListener('timeupdate', broadcastStateToWidget);
 const resumeAudioOnInteraction = () => {
     if (audioContext && audioContext.state === 'suspended') {
         console.log('🔓 Resuming AudioContext on user interaction');
-        audioContext.resume().then(() => {
+        audioPipeline.resume().then(() => {
             console.log('✅ AudioContext resumed');
         }).catch(err => {
             console.error('❌ Failed to resume AudioContext:', err);
@@ -976,24 +755,24 @@ player.addEventListener('play', resumeAudioOnInteraction, { once: true });
             
             if (savedBass !== null) {
                 eqBassSlider.value = savedBass;
-                bassFilter.gain.value = parseFloat(savedBass);
+                audioPipeline.setBass(parseFloat(savedBass));
                 bassValue.textContent = `${savedBass} dB`;
             }
             if (savedMid !== null) {
                 eqMidSlider.value = savedMid;
-                midFilter.gain.value = parseFloat(savedMid);
+                audioPipeline.setMid(parseFloat(savedMid));
                 midValue.textContent = `${savedMid} dB`;
             }
             if (savedTreble !== null) {
                 eqTrebleSlider.value = savedTreble;
-                trebleFilter.gain.value = parseFloat(savedTreble);
+                audioPipeline.setTreble(parseFloat(savedTreble));
                 trebleValue.textContent = `${savedTreble} dB`;
             }
             
             // Bass control
             eqBassSlider.oninput = (e) => {
                 const value = parseFloat(e.target.value);
-                bassFilter.gain.value = value;
+                audioPipeline.setBass(value);
                 bassValue.textContent = `${value} dB`;
                 localStorage.setItem('eqBass', value);
                 debugLog(`Bass: ${value} dB`);
@@ -1002,7 +781,7 @@ player.addEventListener('play', resumeAudioOnInteraction, { once: true });
             // Mid control
             eqMidSlider.oninput = (e) => {
                 const value = parseFloat(e.target.value);
-                midFilter.gain.value = value;
+                audioPipeline.setMid(value);
                 midValue.textContent = `${value} dB`;
                 localStorage.setItem('eqMid', value);
                 debugLog(`Mid: ${value} dB`);
@@ -1011,7 +790,7 @@ player.addEventListener('play', resumeAudioOnInteraction, { once: true });
             // Treble control
             eqTrebleSlider.oninput = (e) => {
                 const value = parseFloat(e.target.value);
-                trebleFilter.gain.value = value;
+                audioPipeline.setTreble(value);
                 trebleValue.textContent = `${value} dB`;
                 localStorage.setItem('eqTreble', value);
                 debugLog(`Treble: ${value} dB`);
@@ -1023,9 +802,9 @@ player.addEventListener('play', resumeAudioOnInteraction, { once: true });
                 eqMidSlider.value = 0;
                 eqTrebleSlider.value = 0;
                 
-                bassFilter.gain.value = 0;
-                midFilter.gain.value = 0;
-                trebleFilter.gain.value = 0;
+                audioPipeline.setBass(0);
+                audioPipeline.setMid(0);
+                audioPipeline.setTreble(0);
                 
                 bassValue.textContent = '0 dB';
                 midValue.textContent = '0 dB';
@@ -1322,7 +1101,7 @@ nextButton.disabled = false;
 if (!audioContext) {
     setupAudioContext();
 } else if (audioContext.state === 'suspended') {
-    audioContext.resume();
+    audioPipeline.resume();
 }
 
 updateMediaSession();
@@ -1855,7 +1634,7 @@ playlistRenderer.render();
         
         player.addEventListener('play', () => {
     if (audioContext && audioContext.state === 'suspended') {
-        audioContext.resume();
+        audioPipeline.resume();
     }
     
     // 🎵 Notify background handler
@@ -1878,7 +1657,7 @@ playlistRenderer.render();
         
 player.addEventListener('pause', () => {
     if (audioContext && audioContext.state === 'running') {
-        audioContext.suspend();
+        audioPipeline.suspend();
     }
     
     // 🎵 Notify background handler
@@ -2663,7 +2442,7 @@ document.addEventListener('visibilitychange', () => {
         
         // Suspend audio context if not playing
         if (audioContext && audioContext.state === 'running' && player.paused) {
-            audioContext.suspend();
+            audioPipeline.suspend();
         }
     } else {
         // Page is visible again
@@ -2676,7 +2455,7 @@ document.addEventListener('visibilitychange', () => {
         
         // Resume audio context if needed
         if (audioContext && audioContext.state === 'suspended' && !player.paused) {
-            audioContext.resume();
+            audioPipeline.resume();
         }
     }
 });
@@ -3096,7 +2875,7 @@ if (!document.pictureInPictureEnabled) {
             
             // Visualizer if available and playing
             if (!player.paused && analyser && dataArray && !isInitial) {
-                analyser.getByteFrequencyData(dataArray);
+                audioPipeline.getFrequencyData();
                 const barCount = 20;
                 const barWidth = (width - 100) / barCount;
                 const startX = 50;
@@ -3528,7 +3307,7 @@ if (storageStatsBtn) {
 window.getAudioDataForVisualizer = () => {
     // Try to get audio data from multiple sources
     if (analyser && dataArray) {
-        analyser.getByteFrequencyData(dataArray);
+        audioPipeline.getFrequencyData();
         return {
             dataArray: dataArray,
             bufferLength: bufferLength,
@@ -3545,7 +3324,7 @@ window.getAudioDataForVisualizer = () => {
         // Create dataArray on the fly
         bufferLength = analyser.frequencyBinCount;
         dataArray = new Uint8Array(bufferLength);
-        analyser.getByteFrequencyData(dataArray);
+        audioPipeline.getFrequencyData();
         console.log('⚠️ Created fallback dataArray for visualizer');
         return {
             dataArray: dataArray,
