@@ -191,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.volumeControlInitialized = true;
 
     // Smart reconnection system
-    if (audioContext && window.volumeGainNode) {
+    if (audioPipeline && audioPipeline.isInitialized && window.volumeGainNode) {
         // Audio context exists - try immediate connection
         const success = reconnectAudioChainWithVolumeControl();
         if (!success) {
@@ -201,7 +201,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
         // Audio context will be created later - set up listener
         document.addEventListener('audioContextReady', () => {
-            setTimeout(() => volumeControl.forceReconnect(), 100);
+            setTimeout(() => {
+                if (volumeControl) volumeControl.forceReconnect();
+            }, 100);
         }, { once: true });
     }
 
@@ -2376,12 +2378,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.getAudioDataForVisualizer = () => {
-        if (analyser && dataArray) {
+        if (audioPipeline && audioPipeline.isInitialized) {
             audioPipeline.getFrequencyData();
             return {
-                dataArray: dataArray,
-                bufferLength: bufferLength,
-                analyser: analyser
+                dataArray: audioPipeline.dataArray,
+                bufferLength: audioPipeline.bufferLength,
+                analyser: audioPipeline.analyser
             };
         } else if (window.sharedAnalyser && window.sharedDataArray) {
             window.sharedAnalyser.getByteFrequencyData(window.sharedDataArray);
