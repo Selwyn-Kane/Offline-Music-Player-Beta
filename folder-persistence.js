@@ -271,7 +271,8 @@ async _executeTransaction(storeNames, mode, operation) {
     async _writeToStore(storeName, key, value) {
         return this._executeTransaction([storeName], 'readwrite', (store) => {
             return new Promise((resolve, reject) => {
-                const request = store.put(value, key);
+                // If the store has a keyPath, we shouldn't provide a separate key parameter
+                const request = store.keyPath ? store.put(value) : store.put(value, key);
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = () => reject(request.error);
             });

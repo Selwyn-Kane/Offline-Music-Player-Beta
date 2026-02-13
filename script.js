@@ -93,6 +93,10 @@ document.addEventListener('DOMContentLoaded', () => {
     window.audioPipeline = audioPipeline;
 
     analyzer = new MusicAnalyzer(debugLog);
+    
+    // Initialize File Loading Manager
+    fileLoadingManager = new EnhancedFileLoadingManager(debugLog);
+    window.fileLoadingManager = fileLoadingManager;
 
     // NOW initialize parsers (after they're declared)
     metadataParser = new MetadataParser(debugLog);
