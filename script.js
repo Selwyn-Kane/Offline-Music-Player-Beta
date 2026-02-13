@@ -9,8 +9,8 @@ let vttParser = null;
 let errorRecovery = null;
 let audioPresetsManager = null;
 let metadataEditor = null;
-let analyzer = null;          // ✅ ADD THIS
-let generator = null;         // ✅ ADD THIS
+let analyzer = null;
+let generator = null;
 let analysisParser = null;
 let lyricsManager = null;
 
@@ -64,7 +64,7 @@ window.colorCache = colorCache;
 let backgroundAnalysisRunning = false;
 
 document.addEventListener('DOMContentLoaded', () => {
-    // ✅ ADD THIS FIRST - Initialize Worker Manager
+    // Initialize Worker Manager
     const workerManager = createMusicPlayerWorkerManager(debugLog);
     window.workerManager = workerManager; // Make it globally accessible
     debugLog('✅ Worker pool system initialized', 'success');
@@ -208,7 +208,7 @@ if (typeof CustomBackgroundManager !== 'undefined') {
     debugLog('✅ Custom background manager initialized', 'success');
 }
 
-     // ✅ ADD THIS - Initialize playlist renderer
+    // Initialize playlist renderer
     const playlistRenderer = new EnhancedPlaylistRenderer(debugLog);
     playlistRenderer.init({
         playlistItems: document.getElementById('playlist-items'),
@@ -1757,7 +1757,6 @@ playlistRenderer.render();
 const crossfadeButton = document.getElementById('crossfade-button');
 if (crossfadeButton) {
     crossfadeButton.onclick = () => {
-        // ✅ ADD THIS CHECK
         if (!crossfadeManager) {
             alert('Please play a track first to initialize the audio system!');
             return;
@@ -2515,10 +2514,8 @@ function setCompactMode(mode) {
         }
     });
     
-    compactToggle.textContent = '🔍 Full View';
-    visualizerEnabled = true; // Enable visualizer
-                    
                     compactToggle.textContent = '📐 Full View';
+	    visualizerEnabled = true; // Enable visualizer
                     
                     // Restart visualizer if enabled and playing
                     if (visualizerEnabled && !player.paused) {
@@ -3143,9 +3140,7 @@ playlistRenderer.render();
 
 // ========== END METADATA EDITOR INTEGRATION ==========
 
-// NOTE: crossfadeManager will be initialized later in setupAudioContext
-crossfadeManager = null; // Initialize as null first
-debugLog('âœ… Advanced systems prepared', 'success');
+debugLog('✅ Advanced systems prepared', 'success');
 
 // Load saved preferences (with null checks)
 const savedCrossfade = localStorage.getItem('crossfadeEnabled') === 'true';
