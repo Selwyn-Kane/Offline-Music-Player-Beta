@@ -122,69 +122,118 @@ class MusicPlayerApp {
     async initializeManagers() {
         const debugLog = this.debugLog.bind(this);
 
-        // Core managers
-        this.managers.worker = createMusicPlayerWorkerManager?.(debugLog);
-        window.workerManager = this.managers.worker;
-
-        this.managers.ui = new UIManager(debugLog);
-        window.uiManager = this.managers.ui;
-
-        this.managers.performance = new PerformanceManager(debugLog);
-        this.managers.imageOptimizer = new ImageOptimizer(debugLog);
-        this.managers.audioBuffer = new AudioBufferManager(debugLog);
-        
-        // Parsers
-        this.managers.metadata = new MetadataParser(debugLog);
-        this.managers.vtt = new VTTParser(debugLog);
-        this.managers.errorRecovery = new ErrorRecovery(debugLog);
-        this.managers.analysisParser = new AnalysisTextParser(debugLog);
-        
-        // Editors and analyzers
-        this.managers.metadataEditor = new MetadataEditor(debugLog);
-        this.managers.analyzer = new MusicAnalyzer(debugLog);
-        
-        // Storage
-        this.managers.customMetadata = new CustomMetadataStore();
-        this.managers.folderPersistence = new FolderPersistence();
-        
-        // File loading
-        this.managers.fileLoading = new EnhancedFileLoadingManager(debugLog);
-        window.fileLoadingManager = this.managers.fileLoading;
-
-        // Display storage stats
-        const stats = await this.managers.folderPersistence.getStats();
-        if (stats) {
-            this.debugLog(`💾 Storage: ${stats.percentUsed}% used | ${stats.historyCount} folders`, 'info');
-            if (stats.hasSavedFolder) {
-                this.debugLog(`📁 Saved: "${stats.folderName}" (${stats.trackCount} tracks)`, 'success');
+        try {
+            // Core managers
+            if (typeof createMusicPlayerWorkerManager !== 'undefined') {
+                this.managers.worker = createMusicPlayerWorkerManager(debugLog);
+                window.workerManager = this.managers.worker;
             }
-        }
 
-        this.debugLog('✅ All managers initialized', 'success');
+            if (typeof UIManager !== 'undefined') {
+                this.managers.ui = new UIManager(debugLog);
+                window.uiManager = this.managers.ui;
+            }
+
+            if (typeof PerformanceManager !== 'undefined') {
+                this.managers.performance = new PerformanceManager(debugLog);
+            }
+            
+            if (typeof ImageOptimizer !== 'undefined') {
+                this.managers.imageOptimizer = new ImageOptimizer(debugLog);
+            }
+            
+            if (typeof AudioBufferManager !== 'undefined') {
+                this.managers.audioBuffer = new AudioBufferManager(debugLog);
+            }
+            
+            // Parsers
+            if (typeof MetadataParser !== 'undefined') {
+                this.managers.metadata = new MetadataParser(debugLog);
+            }
+            
+            if (typeof VTTParser !== 'undefined') {
+                this.managers.vtt = new VTTParser(debugLog);
+            }
+            
+            if (typeof ErrorRecovery !== 'undefined') {
+                this.managers.errorRecovery = new ErrorRecovery(debugLog);
+            }
+            
+            if (typeof AnalysisTextParser !== 'undefined') {
+                this.managers.analysisParser = new AnalysisTextParser(debugLog);
+            }
+            
+            // Editors and analyzers
+            if (typeof MetadataEditor !== 'undefined') {
+                this.managers.metadataEditor = new MetadataEditor(debugLog);
+            }
+            
+            if (typeof MusicAnalyzer !== 'undefined') {
+                this.managers.analyzer = new MusicAnalyzer(debugLog);
+            }
+            
+            // Storage
+            if (typeof CustomMetadataStore !== 'undefined') {
+                this.managers.customMetadata = new CustomMetadataStore();
+            }
+            
+            if (typeof FolderPersistence !== 'undefined') {
+                this.managers.folderPersistence = new FolderPersistence();
+            }
+            
+            // File loading
+            if (typeof EnhancedFileLoadingManager !== 'undefined') {
+                this.managers.fileLoading = new EnhancedFileLoadingManager(debugLog);
+                window.fileLoadingManager = this.managers.fileLoading;
+            }
+
+            // Display storage stats
+            if (this.managers.folderPersistence && typeof this.managers.folderPersistence.getStats === 'function') {
+                const stats = await this.managers.folderPersistence.getStats();
+                if (stats) {
+                    this.debugLog(`💾 Storage: ${stats.percentUsed}% used | ${stats.historyCount} folders`, 'info');
+                    if (stats.hasSavedFolder) {
+                        this.debugLog(`📁 Saved: "${stats.folderName}" (${stats.trackCount} tracks)`, 'success');
+                    }
+                }
+            }
+
+            this.debugLog('✅ All managers initialized', 'success');
+        } catch (error) {
+            this.debugLog(`⚠️ Manager initialization warning: ${error.message}`, 'warning');
+        }
     }
 
     /**
      * Initialize audio pipeline and related components
      */
     initializeAudioPipeline() {
-        this.managers.audioPipeline = new AudioPipeline(this.debugLog.bind(this));
-        window.audioPipeline = this.managers.audioPipeline;
+        try {
+            if (typeof AudioPipeline !== 'undefined') {
+                this.managers.audioPipeline = new AudioPipeline(this.debugLog.bind(this));
+                window.audioPipeline = this.managers.audioPipeline;
+            }
 
-        // Volume control
-        this.managers.volume = new VolumeControl(this.elements.player, this.debugLog.bind(this));
-        window.volumeControlInitialized = true;
+            // Volume control
+            if (typeof VolumeControl !== 'undefined' && this.elements.player) {
+                this.managers.volume = new VolumeControl(this.elements.player, this.debugLog.bind(this));
+                window.volumeControlInitialized = true;
+            }
 
-        // Visualizer
-        if (typeof VisualizerManager !== 'undefined') {
-            this.managers.visualizer = new VisualizerManager();
+            // Visualizer
+            if (typeof VisualizerManager !== 'undefined') {
+                this.managers.visualizer = new VisualizerManager();
+            }
+
+            // Background audio
+            if (window.backgroundAudioHandler) {
+                this.initializeBackgroundAudio();
+            }
+
+            this.debugLog('✅ Audio pipeline initialized', 'success');
+        } catch (error) {
+            this.debugLog(`⚠️ Audio pipeline warning: ${error.message}`, 'warning');
         }
-
-        // Background audio
-        if (window.backgroundAudioHandler) {
-            this.initializeBackgroundAudio();
-        }
-
-        this.debugLog('✅ Audio pipeline initialized', 'success');
     }
 
     /**
@@ -357,7 +406,15 @@ class MusicPlayerApp {
             this.state.playlist = tracks;
             this.state.currentTrackIndex = -1;
             
-            await this.managers.folderPersistence?.saveFolder(dirHandle, tracks);
+            // Save folder handle if persistence manager supports it
+            if (this.managers.folderPersistence && typeof this.managers.folderPersistence.saveFolder === 'function') {
+                try {
+                    await this.managers.folderPersistence.saveFolder(dirHandle, tracks);
+                } catch (error) {
+                    this.debugLog(`⚠️ Could not persist folder: ${error.message}`, 'warning');
+                }
+            }
+            
             this.renderPlaylist();
             this.savePlaylistToStorage();
             
@@ -716,6 +773,10 @@ class MusicPlayerApp {
      */
     async startBackgroundAnalysis() {
         if (this.state.backgroundAnalysisRunning || this.state.playlist.length === 0) return;
+        if (!this.managers.analyzer || typeof this.managers.analyzer.analyzeTrack !== 'function') {
+            this.debugLog('⚠️ Analyzer not available, skipping background analysis', 'warning');
+            return;
+        }
 
         this.state.backgroundAnalysisRunning = true;
         this.debugLog('🔍 Starting background analysis...', 'info');
@@ -759,9 +820,13 @@ class MusicPlayerApp {
             await new Promise(resolve => setTimeout(resolve, this.config.ANALYSIS_BATCH_DELAY_MS));
         }
 
-        if (analyzedCount > 0) {
-            this.managers.analyzer?.saveAnalysesToStorage();
-            this.debugLog(`✅ Analyzed ${analyzedCount} tracks`, 'success');
+        if (analyzedCount > 0 && this.managers.analyzer && typeof this.managers.analyzer.saveAnalysesToStorage === 'function') {
+            try {
+                this.managers.analyzer.saveAnalysesToStorage();
+                this.debugLog(`✅ Analyzed ${analyzedCount} tracks`, 'success');
+            } catch (error) {
+                this.debugLog(`⚠️ Could not save analyses: ${error.message}`, 'warning');
+            }
         }
 
         this.state.backgroundAnalysisRunning = false;
