@@ -272,7 +272,9 @@ async _executeTransaction(storeNames, mode, operation) {
         return this._executeTransaction([storeName], 'readwrite', (store) => {
             return new Promise((resolve, reject) => {
                 // If the store has a keyPath, we shouldn't provide a separate key parameter
-                const request = store.keyPath ? store.put(value) : store.put(value, key);
+                // Note: store.keyPath can be a string or an array
+                const hasKeyPath = store.keyPath !== null && store.keyPath !== undefined;
+                const request = hasKeyPath ? store.put(value) : store.put(value, key);
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = () => reject(request.error);
             });

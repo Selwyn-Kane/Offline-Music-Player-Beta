@@ -214,6 +214,26 @@ class EnhancedFileLoadingManager {
     
     // ========== MAIN LOADING METHODS ==========
     
+    async loadFromFolderHandle(handle) {
+        this.debugLog(`📂 Scanning folder: ${handle.name}...`, 'info');
+        const files = [];
+        
+        try {
+            for await (const entry of handle.values()) {
+                if (entry.kind === 'file') {
+                    const file = await entry.getFile();
+                    files.push(file);
+                }
+            }
+            
+            this.debugLog(`✅ 📁 Found ${files.length} files`, 'success');
+            return await this.loadFiles(files);
+        } catch (err) {
+            this.debugLog(`❌ Folder scan failed: ${err.message}`, 'error');
+            throw err;
+        }
+    }
+
     async loadFiles(files) {
         if (!files || files.length === 0) {
             this.debugLog('No files provided', 'warning');

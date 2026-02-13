@@ -1727,22 +1727,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         try {
-            await fileLoadingManager.loadFromFolderHandle(folderHandle);
+            // Use the correct method name from EnhancedFileLoadingManager
+            const result = await fileLoadingManager.loadFromFolderHandle(folderHandle);
             
-            const tracks = fileLoadingManager.getPlaylist();
-            if (tracks.length > 0) {
-                playlist = tracks;
+            if (result && result.success && result.playlist.length > 0) {
+                playlist = result.playlist;
                 currentTrackIndex = -1;
                 
                 playlistRenderer.setPlaylist(playlist, currentTrackIndex);
                 playlistRenderer.render();
                 updatePlaylistStatus();
                 
-                const stats = await fileLoadingManager.getFolderStats();
-                await folderPersistence.updateFolderStats(folderHandle.name, stats);
+                // Use stats from the result
+                if (result.stats) {
+                    await folderPersistence.updateFolderStats(folderHandle.name, result.stats);
+                }
                 
-                debugLog(`Successfully loaded ${tracks.length} tracks from folder`, 'success');
-                uiManager.notify(`Loaded ${tracks.length} tracks`, 'success');
+                debugLog(`Successfully loaded ${playlist.length} tracks from folder`, 'success');
+                uiManager.notify(`Loaded ${playlist.length} tracks`, 'success');
                 
                 savePlaylistToStorage();
                 startBackgroundAnalysis();
@@ -1752,7 +1754,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (err) {
             debugLog(`Error loading from folder: ${err.message}`, 'error');
-            uiManager.notify(`Load failed: ${err.message}`, 'error');
+            uiManager.notify(`Error loading folder: ${err.message}`, 'error');
         }
     }
 
