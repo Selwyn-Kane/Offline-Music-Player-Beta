@@ -1740,7 +1740,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // Use stats from the result
                 if (result.stats) {
-                    await folderPersistence.updateFolderStats(folderHandle.name, result.stats);
+                    await folderPersistence.updateMetadata({
+                        trackCount: result.stats.audioFiles,
+                        hasLyrics: result.stats.withLyrics > 0,
+                        hasAnalysis: result.stats.withAnalysis > 0,
+                        totalSize: result.stats.totalSize || 0
+                    });
                 }
                 
                 debugLog(`Successfully loaded ${playlist.length} tracks from folder`, 'success');
@@ -2337,7 +2342,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     playlist[index].analysis = analysis;
                     analyzedCount++;
                     
-                    if (index === currentTrackIndex) {
+                    if (index === currentTrackIndex && visualizerManager) {
                         visualizerManager.setTrackAnalysis(analysis);
                         debugLog('🎨 Current track visualizer upgraded!', 'success');
                     }
@@ -2354,7 +2359,7 @@ document.addEventListener('DOMContentLoaded', () => {
             playlistRenderer.setPlaylist(playlist, currentTrackIndex);
             playlistRenderer.render();
             
-            if (analyzedCount % batchSize === 0) {
+            if (analyzedCount % batchSize === 0 && analyzer) {
                 analyzer.saveAnalysesToStorage();
                 debugLog(`💾 Saved ${analyzedCount}/${needsAnalysis.length} analyses`, 'info');
             }
