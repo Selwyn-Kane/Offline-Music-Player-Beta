@@ -1475,48 +1475,54 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Folder Selection Handlers ---
-    const folderButton = document.getElementById('load-folder-button');
+    const folderButton = document.getElementById('folder-button');
 
-    folderButton.onclick = async () => {
-        try {
-            const history = await folderPersistence.getHistory();
-            const currentMetadata = await folderPersistence.getFolderMetadata();
-            
-            if (history.length > 0 || currentMetadata) {
-                showFolderHistoryModal();
-                return;
+    if (folderButton) {
+        folderButton.onclick = async () => {
+            try {
+                const history = await folderPersistence.getHistory();
+                const currentMetadata = await folderPersistence.getFolderMetadata();
+                
+                if (history.length > 0 || currentMetadata) {
+                    showFolderHistoryModal();
+                    return;
+                }
+                
+                await selectNewFolder();
+                
+            } catch (err) {
+                if (err.name === 'AbortError') {
+                    debugLog('Folder selection cancelled', 'info');
+                } else {
+                    debugLog(`Folder selection failed: ${err.message}`, 'error');
+                    uiManager.notify(`Failed to access folder: ${err.message}`, 'error');
+                }
             }
-            
-            await selectNewFolder();
-            
-        } catch (err) {
-            if (err.name === 'AbortError') {
-                debugLog('Folder selection cancelled', 'info');
-            } else {
-                debugLog(`Folder selection failed: ${err.message}`, 'error');
-                uiManager.notify(`Failed to access folder: ${err.message}`, 'error');
-            }
-        }
-    };
+        };
+    }
 
     const clearFolderButton = document.getElementById('clear-folder-button');
 
-    clearFolderButton.onclick = async () => {
-        if (confirm('Forget the saved music folder? You\'ll need to select it again next time.')) {
-            try {
-                await folderPersistence.deleteFolderHandle();
-                folderHandle = null;
-                
-                folderButton.textContent = '📁 Select Music Folder';
-                folderButton.classList.remove('active');
-                clearFolderButton.style.display = 'none';
-                
-                debugLog('Folder forgotten', 'success');
-            } catch (err) {
-                debugLog(`Error clearing folder: ${err.message}`, 'error');
+    if (clearFolderButton) {
+        clearFolderButton.onclick = async () => {
+            if (confirm('Forget the saved music folder? You\'ll need to select it again next time.')) {
+                try {
+                    await folderPersistence.deleteFolderHandle();
+                    folderHandle = null;
+                    
+                    if (folderButton) {
+                        folderButton.textContent = '📁 Select Music Folder';
+                        folderButton.classList.remove('active');
+                    }
+                    clearFolderButton.style.display = 'none';
+                    
+                    debugLog('Folder forgotten', 'success');
+                } catch (err) {
+                    debugLog(`Error clearing folder: ${err.message}`, 'error');
+                }
             }
-        }
-    };
+        };
+    }
 
     function updateFolderButtons() {
         if (folderHandle) {
@@ -1532,21 +1538,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const folderHistoryNew = document.getElementById('folder-history-new');
     const folderHistoryClear = document.getElementById('folder-history-clear');
 
-    if (folderHistoryClose) {
-        folderHistoryClose.onclick = closeFolderHistoryModal;
-    }
-
-    if (folderHistoryOverlay) {
-        folderHistoryOverlay.onclick = closeFolderHistoryModal;
-    }
-
+    if (folderHistoryClose) folderHistoryClose.onclick = closeFolderHistoryModal;
+    if (folderHistoryOverlay) folderHistoryOverlay.onclick = closeFolderHistoryModal;
     if (folderHistoryNew) {
         folderHistoryNew.onclick = async () => {
             closeFolderHistoryModal();
             await selectNewFolder();
         };
     }
-
     if (folderHistoryClear) {
         folderHistoryClear.onclick = async () => {
             if (confirm('Clear all folder history?\n\nThis will not delete your music files, only the history of folders you\'ve accessed.')) {
@@ -2260,6 +2259,41 @@ document.addEventListener('DOMContentLoaded', () => {
             window.open('deep-music-analysis.html', '_blank');
         };
     }
+
+    const storageStatsBtn = document.getElementById('storage-stats-btn');
+    if (storageStatsBtn) {
+        storageStatsBtn.onclick = async () => {
+            const stats = await folderPersistence.getStats();
+            
+            if (stats) {
+                const history = await folderPersistence.getHistory();
+                
+                let message = `💾 STORAGE INFORMATION\n\n`;
+                message += `Used: ${folderPersistence.formatBytes(stats.storageUsed)}\n`;
+                message += `Available: ${folderPersistence.formatBytes(stats.storageQuota)}\n`;
+                message += `Usage: ${stats.percentUsed}%\n\n`;
+                
+                if (stats.hasSavedFolder) {
+                    message += `📁 CURRENT FOLDER\n`;
+                    message += `Name: ${stats.folderName}\n`;
+                    message += `Tracks: ${stats.trackCount}\n`;
+                    message += `Last accessed: ${new Date(stats.lastAccessed).toLocaleString()}\n\n`;
+                }
+                
+                if (history.length > 0) {
+                    message += `📚 RECENT FOLDERS (${history.length})\n`;
+                    history.slice(0, 5).forEach((entry, i) => {
+                        const date = new Date(entry.timestamp).toLocaleDateString();
+                        message += `${i + 1}. ${entry.folderName} (${entry.trackCount} tracks) - ${date}\n`;
+                    });
+                }
+                
+                alert(message);
+            } else {
+                alert('Unable to retrieve storage information.');
+            }
+        };
+    }
         
     async function startBackgroundAnalysis() {
         if (backgroundAnalysisRunning) return;
@@ -2328,41 +2362,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         backgroundAnalysisRunning = false;
-    }
-
-    const storageStatsBtn = document.getElementById('storage-stats-btn');
-    if (storageStatsBtn) {
-        storageStatsBtn.onclick = async () => {
-            const stats = await folderPersistence.getStats();
-            
-            if (stats) {
-                const history = await folderPersistence.getHistory();
-                
-                let message = `💾 STORAGE INFORMATION\n\n`;
-                message += `Used: ${folderPersistence.formatBytes(stats.storageUsed)}\n`;
-                message += `Available: ${folderPersistence.formatBytes(stats.storageQuota)}\n`;
-                message += `Usage: ${stats.percentUsed}%\n\n`;
-                
-                if (stats.hasSavedFolder) {
-                    message += `📁 CURRENT FOLDER\n`;
-                    message += `Name: ${stats.folderName}\n`;
-                    message += `Tracks: ${stats.trackCount}\n`;
-                    message += `Last accessed: ${new Date(stats.lastAccessed).toLocaleString()}\n\n`;
-                }
-                
-                if (history.length > 0) {
-                    message += `📚 RECENT FOLDERS (${history.length})\n`;
-                    history.slice(0, 5).forEach((entry, i) => {
-                        const date = new Date(entry.timestamp).toLocaleDateString();
-                        message += `${i + 1}. ${entry.folderName} (${entry.trackCount} tracks) - ${date}\n`;
-                    });
-                }
-                
-                alert(message);
-            } else {
-                alert('Unable to retrieve storage information.');
-            }
-        };
     }
 
     window.getAudioDataForVisualizer = () => {
