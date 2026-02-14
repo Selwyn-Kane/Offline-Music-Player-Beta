@@ -1,6 +1,12 @@
 /* ============================================
-   Ultimate Local Music Player - FULLY INTEGRATED v1.2
-   Fixed: All sidebar features, keyboard shortcuts, UI modes
+   Ultimate Local Music Player - MEMORY LEAK FIXED v2.0
+   
+   CRITICAL FIXES:
+   - Blob URL tracking and cleanup
+   - Event listener tracking
+   - Manager integration with performance manager
+   - Cleanup on track changes
+   - Proper destroy sequence
    ============================================ */
 
 // ✅ CRITICAL: Audio Chain Reconnection Helper
@@ -71,7 +77,9 @@ class MusicPlayerApp {
             backgroundAnalysisRunning: false,
             visualizerEnabled: true,
             stickyMode: false,
-            pipActive: false
+            pipActive: false,
+            initialized: false,
+            destroyed: false
         };
 
         this.config = {
@@ -83,9 +91,22 @@ class MusicPlayerApp {
         this.elements = {};
         this.colorCache = new Map();
         window.colorCache = this.colorCache;
+        
+        // CRITICAL: Resource tracking for cleanup
+        this.resources = {
+            blobURLs: new Set(),
+            eventListeners: [],
+            intervals: new Set(),
+            timeouts: new Set()
+        };
     }
 
     async init() {
+        if (this.state.initialized) {
+            this.debugLog('⚠️ App already initialized', 'warning');
+            return;
+        }
+        
         try {
             this.cacheElements();
             await this.initializeManagers();
@@ -94,7 +115,12 @@ class MusicPlayerApp {
             this.setupKeyboardShortcuts();
             this.setupSidebarButtons();
             await this.restoreState();
-            this.debugLog('✅ Music player initialized successfully', 'success');
+            
+            // CRITICAL: Connect managers to performance manager
+            this.connectManagersToPerformance();
+            
+            this.state.initialized = true;
+            this.debugLog('✅ Music player initialized successfully (Memory Leak Fixed v2.0)', 'success');
         } catch (error) {
             this.debugLog(`❌ Initialization error: ${error.message}`, 'error');
             console.error(error);
@@ -289,6 +315,39 @@ class MusicPlayerApp {
         }
     }
 
+    /**
+     * CRITICAL NEW: Connect all managers to performance manager for coordinated cleanup
+     */
+    connectManagersToPerformance() {
+        if (!this.managers.performance) {
+            this.debugLog('⚠️ Performance manager not available for connections', 'warning');
+            return;
+        }
+        
+        // Connect managers that need coordinated cleanup
+        if (this.managers.visualizer) {
+            this.managers.performance.connectManager('visualizer', this.managers.visualizer);
+        }
+        
+        if (this.managers.audioBuffer) {
+            this.managers.performance.connectManager('audioBuffer', this.managers.audioBuffer);
+        }
+        
+        if (this.managers.lyrics) {
+            this.managers.performance.connectManager('lyrics', this.managers.lyrics);
+        }
+        
+        if (this.managers.audioPipeline) {
+            this.managers.performance.connectManager('audioPipeline', this.managers.audioPipeline);
+        }
+        
+        if (this.managers.ui) {
+            this.managers.performance.connectManager('ui', this.managers.ui);
+        }
+        
+        this.debugLog('✅ Managers connected to performance manager', 'success');
+    }
+
     initializeAudio() {
         try {
             if (typeof AudioPipeline !== 'undefined' && this.elements.player) {
@@ -457,7 +516,7 @@ class MusicPlayerApp {
         const dropdown = document.getElementById('eq-preset-select');
         if (!dropdown || !this.managers.audioPresets) return;
         
-        dropdown.addEventListener('change', (e) => {
+        const changeHandler = (e) => {
             const presetId = e.target.value;
             if (!presetId) return;
             
@@ -477,6 +536,15 @@ class MusicPlayerApp {
             }
             
             this.debugLog(`🎛️ Applied preset: ${presetId}`, 'success');
+        };
+        
+        dropdown.addEventListener('change', changeHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: dropdown,
+            event: 'change',
+            handler: changeHandler
         });
     }
 
@@ -508,7 +576,7 @@ class MusicPlayerApp {
         
         button.disabled = false;
         
-        button.addEventListener('click', () => {
+        const clickHandler = () => {
             const newState = this.managers.autoEQ.toggle();
             
             button.classList.toggle('active', newState);
@@ -532,6 +600,15 @@ class MusicPlayerApp {
                 `Auto-EQ ${newState ? 'enabled' : 'disabled'}`, 
                 newState ? 'success' : 'info'
             );
+        };
+        
+        button.addEventListener('click', clickHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: button,
+            event: 'click',
+            handler: clickHandler
         });
     }
 
@@ -545,7 +622,7 @@ class MusicPlayerApp {
             button.querySelector('.sidebar-label').textContent = 'Boost On';
         }
         
-        button.addEventListener('click', () => {
+        const clickHandler = () => {
             const currentState = this.managers.volume.isBoostEnabled();
             const newState = !currentState;
             
@@ -559,6 +636,15 @@ class MusicPlayerApp {
                 `Volume Boost ${newState ? 'enabled' : 'disabled'}`, 
                 newState ? 'success' : 'info'
             );
+        };
+        
+        button.addEventListener('click', clickHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: button,
+            event: 'click',
+            handler: clickHandler
         });
     }
 
@@ -575,7 +661,7 @@ class MusicPlayerApp {
         
         button.disabled = false;
         
-        button.addEventListener('click', () => {
+        const clickHandler = () => {
             const newState = !this.managers.crossfade.enabled;
             this.managers.crossfade.setEnabled(newState);
             
@@ -589,6 +675,15 @@ class MusicPlayerApp {
                 `Crossfade ${newState ? 'enabled' : 'disabled'}`, 
                 newState ? 'success' : 'info'
             );
+        };
+        
+        button.addEventListener('click', clickHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: button,
+            event: 'click',
+            handler: clickHandler
         });
     }
 
@@ -596,7 +691,7 @@ class MusicPlayerApp {
         const button = document.getElementById('debug-toggle');
         if (!button) return;
         
-        button.addEventListener('click', () => {
+        const clickHandler = () => {
             this.state.debugMode = !this.state.debugMode;
             button.classList.toggle('active', this.state.debugMode);
             
@@ -605,6 +700,15 @@ class MusicPlayerApp {
             }
             
             this.debugLog(`Debug mode: ${this.state.debugMode ? 'ON' : 'OFF'}`, 'info');
+        };
+        
+        button.addEventListener('click', clickHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: button,
+            event: 'click',
+            handler: clickHandler
         });
     }
 
@@ -616,7 +720,7 @@ class MusicPlayerApp {
         this.state.compactMode = savedMode;
         this.applyCompactMode(savedMode);
         
-        button.addEventListener('click', () => {
+        const clickHandler = () => {
             const modes = ['full', 'compact', 'mini'];
             const currentIndex = modes.indexOf(this.state.compactMode);
             const newMode = modes[(currentIndex + 1) % modes.length];
@@ -630,9 +734,21 @@ class MusicPlayerApp {
             button.querySelector('.sidebar-label').textContent = modeNames[newMode];
             
             this.managers.ui?.showToast(`View: ${modeNames[newMode]}`, 'info');
+        };
+        
+        button.addEventListener('click', clickHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: button,
+            event: 'click',
+            handler: clickHandler
         });
     }
 
+    /**
+     * CRITICAL: Apply compact mode with performance manager integration
+     */
     applyCompactMode(mode) {
         if (!this.elements.mainContent) return;
         
@@ -644,6 +760,7 @@ class MusicPlayerApp {
             this.elements.mainContent.classList.add('mini-mode');
         }
         
+        // CRITICAL: Tell performance manager about mode change
         if (this.managers.performance) {
             this.managers.performance.setMode(mode);
         }
@@ -653,7 +770,7 @@ class MusicPlayerApp {
         const button = document.getElementById('pip-toggle');
         if (!button) return;
         
-        button.addEventListener('click', async () => {
+        const clickHandler = async () => {
             try {
                 if (this.state.pipActive) {
                     if (document.pictureInPictureElement) {
@@ -684,6 +801,15 @@ class MusicPlayerApp {
                 this.debugLog(`PiP error: ${error.message}`, 'error');
                 this.managers.ui?.showToast('PiP not supported', 'error');
             }
+        };
+        
+        button.addEventListener('click', clickHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: button,
+            event: 'click',
+            handler: clickHandler
         });
     }
 
@@ -699,7 +825,7 @@ class MusicPlayerApp {
             this.applyStickyMode(true);
         }
         
-        button.addEventListener('click', () => {
+        const clickHandler = () => {
             this.state.stickyMode = !this.state.stickyMode;
             
             button.classList.toggle('active', this.state.stickyMode);
@@ -714,6 +840,15 @@ class MusicPlayerApp {
                 `Sticky mode ${this.state.stickyMode ? 'enabled' : 'disabled'}`, 
                 this.state.stickyMode ? 'success' : 'info'
             );
+        };
+        
+        button.addEventListener('click', clickHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: button,
+            event: 'click',
+            handler: clickHandler
         });
     }
 
@@ -735,7 +870,7 @@ class MusicPlayerApp {
         const button = document.getElementById('storage-stats-btn');
         if (!button) return;
         
-        button.addEventListener('click', async () => {
+        const clickHandler = async () => {
             try {
                 let message = '💾 Storage Information\n\n';
                 
@@ -755,14 +890,35 @@ class MusicPlayerApp {
                     message += `Audio Buffer:\n`;
                     message += `- Memory: ${stats.memoryUsedMB}\n`;
                     message += `- Cached: ${stats.cachedTracks} tracks\n`;
-                    message += `- Hit rate: ${stats.hitRate}\n`;
+                    message += `- Hit rate: ${stats.hitRate}\n\n`;
                 }
+                
+                if (this.managers.performance) {
+                    const perfStats = this.managers.performance.getStatsDisplay();
+                    message += `Performance:\n`;
+                    message += `- FPS: ${perfStats.fps}\n`;
+                    message += `- Memory: ${perfStats.memory}\n`;
+                    message += `- CPU: ${perfStats.cpuLoad}\n`;
+                    message += `- Active Resources: ${perfStats.activeResources.intervals} intervals, ${perfStats.activeResources.animations} animations\n\n`;
+                }
+                
+                message += `Blob URLs: ${this.resources.blobURLs.size}\n`;
+                message += `Event Listeners: ${this.resources.eventListeners.length}`;
                 
                 alert(message);
             } catch (error) {
                 this.debugLog(`Storage stats error: ${error.message}`, 'error');
                 alert('Storage information not available');
             }
+        };
+        
+        button.addEventListener('click', clickHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: button,
+            event: 'click',
+            handler: clickHandler
         });
     }
 
@@ -770,12 +926,21 @@ class MusicPlayerApp {
         const button = document.getElementById('custom-bg-button');
         if (!button) return;
         
-        button.addEventListener('click', () => {
+        const clickHandler = () => {
             if (typeof window.customBackground !== 'undefined' && window.customBackground.openPicker) {
                 window.customBackground.openPicker();
             } else {
                 this.managers.ui?.showToast('Background picker not available', 'error');
             }
+        };
+        
+        button.addEventListener('click', clickHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: button,
+            event: 'click',
+            handler: clickHandler
         });
     }
 
@@ -783,12 +948,15 @@ class MusicPlayerApp {
         const button = document.getElementById('clear-cache-btn');
         if (!button) return;
         
-        button.addEventListener('click', async () => {
+        const clickHandler = async () => {
             if (!confirm('Clear all cached data? This will not delete your playlist.')) {
                 return;
             }
             
             try {
+                // Clean up blob URLs before clearing cache
+                this.revokeBlobURLs();
+                
                 if (this.managers.audioBuffer) {
                     this.managers.audioBuffer.clearAllBuffers();
                 }
@@ -808,11 +976,20 @@ class MusicPlayerApp {
                 this.debugLog(`Cache clear error: ${error.message}`, 'error');
                 this.managers.ui?.showToast('Error clearing cache', 'error');
             }
+        };
+        
+        button.addEventListener('click', clickHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: button,
+            event: 'click',
+            handler: clickHandler
         });
     }
 
     setupKeyboardShortcuts() {
-        document.addEventListener('keydown', (e) => {
+        const keydownHandler = (e) => {
             // Ignore if typing in input fields
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
                 return;
@@ -909,6 +1086,15 @@ class MusicPlayerApp {
                     localStorage.setItem('compactMode', newMode);
                     break;
             }
+        };
+        
+        document.addEventListener('keydown', keydownHandler);
+        
+        // CRITICAL: Track event listener
+        this.resources.eventListeners.push({
+            element: document,
+            event: 'keydown',
+            handler: keydownHandler
         });
         
         this.debugLog('✅ Keyboard shortcuts enabled', 'success');
@@ -962,43 +1148,78 @@ class MusicPlayerApp {
     }
 
     setupEventListeners() {
-        this.elements.player.addEventListener('ended', () => this.handleTrackEnded());
-        this.elements.player.addEventListener('timeupdate', () => this.handleTimeUpdate());
-        this.elements.player.addEventListener('loadedmetadata', () => this.handleMetadataLoaded());
-        this.elements.player.addEventListener('error', (e) => this.handlePlayerError(e));
-        this.elements.player.addEventListener('play', () => this.handlePlay());
-        this.elements.player.addEventListener('pause', () => this.handlePause());
+        // Audio player events
+        const endedHandler = () => this.handleTrackEnded();
+        const timeupdateHandler = () => this.handleTimeUpdate();
+        const loadedmetadataHandler = () => this.handleMetadataLoaded();
+        const errorHandler = (e) => this.handlePlayerError(e);
+        const playHandler = () => this.handlePlay();
+        const pauseHandler = () => this.handlePause();
+        
+        this.elements.player.addEventListener('ended', endedHandler);
+        this.elements.player.addEventListener('timeupdate', timeupdateHandler);
+        this.elements.player.addEventListener('loadedmetadata', loadedmetadataHandler);
+        this.elements.player.addEventListener('error', errorHandler);
+        this.elements.player.addEventListener('play', playHandler);
+        this.elements.player.addEventListener('pause', pauseHandler);
+        
+        // CRITICAL: Track event listeners
+        this.resources.eventListeners.push(
+            { element: this.elements.player, event: 'ended', handler: endedHandler },
+            { element: this.elements.player, event: 'timeupdate', handler: timeupdateHandler },
+            { element: this.elements.player, event: 'loadedmetadata', handler: loadedmetadataHandler },
+            { element: this.elements.player, event: 'error', handler: errorHandler },
+            { element: this.elements.player, event: 'play', handler: playHandler },
+            { element: this.elements.player, event: 'pause', handler: pauseHandler }
+        );
 
+        // Button events
         if (this.elements.loadButton) {
-            this.elements.loadButton.addEventListener('click', () => this.loadFiles());
+            const loadHandler = () => this.loadFiles();
+            this.elements.loadButton.addEventListener('click', loadHandler);
+            this.resources.eventListeners.push({ element: this.elements.loadButton, event: 'click', handler: loadHandler });
         }
 
         if (this.elements.folderButton) {
-            this.elements.folderButton.addEventListener('click', () => this.loadFromFolder());
+            const folderHandler = () => this.loadFromFolder();
+            this.elements.folderButton.addEventListener('click', folderHandler);
+            this.resources.eventListeners.push({ element: this.elements.folderButton, event: 'click', handler: folderHandler });
         }
 
         if (this.elements.prevButton) {
-            this.elements.prevButton.addEventListener('click', () => this.playPrevious());
+            const prevHandler = () => this.playPrevious();
+            this.elements.prevButton.addEventListener('click', prevHandler);
+            this.resources.eventListeners.push({ element: this.elements.prevButton, event: 'click', handler: prevHandler });
         }
 
         if (this.elements.nextButton) {
-            this.elements.nextButton.addEventListener('click', () => this.playNext());
+            const nextHandler = () => this.playNext();
+            this.elements.nextButton.addEventListener('click', nextHandler);
+            this.resources.eventListeners.push({ element: this.elements.nextButton, event: 'click', handler: nextHandler });
         }
 
         if (this.elements.playPauseButton) {
-            this.elements.playPauseButton.addEventListener('click', () => this.togglePlayPause());
+            const playPauseHandler = () => this.togglePlayPause();
+            this.elements.playPauseButton.addEventListener('click', playPauseHandler);
+            this.resources.eventListeners.push({ element: this.elements.playPauseButton, event: 'click', handler: playPauseHandler });
         }
 
         if (this.elements.shuffleButton) {
-            this.elements.shuffleButton.addEventListener('click', () => this.toggleShuffle());
+            const shuffleHandler = () => this.toggleShuffle();
+            this.elements.shuffleButton.addEventListener('click', shuffleHandler);
+            this.resources.eventListeners.push({ element: this.elements.shuffleButton, event: 'click', handler: shuffleHandler });
         }
 
         if (this.elements.loopButton) {
-            this.elements.loopButton.addEventListener('click', () => this.cycleLoopMode());
+            const loopHandler = () => this.cycleLoopMode();
+            this.elements.loopButton.addEventListener('click', loopHandler);
+            this.resources.eventListeners.push({ element: this.elements.loopButton, event: 'click', handler: loopHandler });
         }
 
         if (this.elements.clearButton) {
-            this.elements.clearButton.addEventListener('click', () => this.clearPlaylist());
+            const clearHandler = () => this.clearPlaylist();
+            this.elements.clearButton.addEventListener('click', clearHandler);
+            this.resources.eventListeners.push({ element: this.elements.clearButton, event: 'click', handler: clearHandler });
         }
 
         if (this.elements.progressContainer) {
@@ -1013,7 +1234,7 @@ class MusicPlayerApp {
     setupProgressBar() {
         let seekDebounce = null;
 
-        this.elements.progressContainer.addEventListener('mousedown', (e) => {
+        const mousedownHandler = (e) => {
             clearTimeout(seekDebounce);
             this.state.isSeekingProg = true;
             const wasPlaying = !this.elements.player.paused;
@@ -1026,14 +1247,19 @@ class MusicPlayerApp {
                     );
                 }
             }, this.config.SEEK_DEBOUNCE_DELAY_MS);
-        });
+            
+            // Track timeout
+            if (seekDebounce) {
+                this.resources.timeouts.add(seekDebounce);
+            }
+        };
 
-        document.addEventListener('mousemove', (e) => {
+        const mousemoveHandler = (e) => {
             if (!this.state.isSeekingProg) return;
             this.updateProgressBar(e);
-        });
+        };
 
-        document.addEventListener('mouseup', (e) => {
+        const mouseupHandler = (e) => {
             if (!this.state.isSeekingProg) return;
             this.state.isSeekingProg = false;
             const newTime = this.updateProgressBar(e);
@@ -1044,7 +1270,18 @@ class MusicPlayerApp {
                     this.debugLog(`Seek failed: ${err.message}`, 'error');
                 }
             }
-        });
+        };
+
+        this.elements.progressContainer.addEventListener('mousedown', mousedownHandler);
+        document.addEventListener('mousemove', mousemoveHandler);
+        document.addEventListener('mouseup', mouseupHandler);
+        
+        // CRITICAL: Track event listeners
+        this.resources.eventListeners.push(
+            { element: this.elements.progressContainer, event: 'mousedown', handler: mousedownHandler },
+            { element: document, event: 'mousemove', handler: mousemoveHandler },
+            { element: document, event: 'mouseup', handler: mouseupHandler }
+        );
     }
 
     updateProgressBar(e) {
@@ -1069,15 +1306,30 @@ class MusicPlayerApp {
         sliders.forEach(({ slider, display, type }) => {
             if (!slider) return;
             
-            slider.addEventListener('input', (e) => {
+            const inputHandler = (e) => {
                 const value = parseFloat(e.target.value);
                 if (display) display.textContent = `${value > 0 ? '+' : ''}${value} dB`;
                 this.updateEqualizer(type, value);
+            };
+            
+            slider.addEventListener('input', inputHandler);
+            
+            // CRITICAL: Track event listener
+            this.resources.eventListeners.push({
+                element: slider,
+                event: 'input',
+                handler: inputHandler
             });
         });
 
         if (this.elements.eqResetBtn) {
-            this.elements.eqResetBtn.addEventListener('click', () => this.resetEqualizer());
+            const resetHandler = () => this.resetEqualizer();
+            this.elements.eqResetBtn.addEventListener('click', resetHandler);
+            this.resources.eventListeners.push({
+                element: this.elements.eqResetBtn,
+                event: 'click',
+                handler: resetHandler
+            });
         }
     }
 
@@ -1167,8 +1419,19 @@ class MusicPlayerApp {
         }
     }
 
+    /**
+     * CRITICAL: Clean up resources from previous track before loading new one
+     */
     async loadTrack(index) {
         if (index < 0 || index >= this.state.playlist.length) return;
+
+        // CRITICAL NEW: Cleanup previous track resources
+        this.cleanupCurrentTrack();
+        
+        // CRITICAL NEW: Tell performance manager about track change
+        if (this.managers.performance) {
+            this.managers.performance.cleanupForTrackChange();
+        }
 
         this.state.currentTrackIndex = index;
         const track = this.state.playlist[index];
@@ -1209,8 +1472,9 @@ class MusicPlayerApp {
         if (this.managers.audioBuffer && track.file) {
             const loadTrackIndex = index;
             
+            // CRITICAL: Revoke old blob URL before creating new one
             if (this.elements.player.src && this.elements.player.src.startsWith('blob:')) {
-                URL.revokeObjectURL(this.elements.player.src);
+                this.revokeBlobURL(this.elements.player.src);
             }
 
             this.managers.audioBuffer.getBuffer(loadTrackIndex).then(buffer => {
@@ -1218,6 +1482,10 @@ class MusicPlayerApp {
 
                 const blob = new Blob([buffer], { type: 'audio/mpeg' });
                 const bufferUrl = URL.createObjectURL(blob);
+                
+                // CRITICAL: Track new blob URL
+                this.resources.blobURLs.add(bufferUrl);
+                
                 this.elements.player.src = bufferUrl;
                 this.elements.player.load();
 
@@ -1266,6 +1534,46 @@ class MusicPlayerApp {
         if (this.elements.nextButton) this.elements.nextButton.disabled = false;
 
         this.updateMediaSession();
+    }
+
+    /**
+     * CRITICAL NEW: Clean up resources from current track
+     */
+    cleanupCurrentTrack() {
+        // Revoke current blob URL if it exists
+        if (this.elements.player.src && this.elements.player.src.startsWith('blob:')) {
+            this.revokeBlobURL(this.elements.player.src);
+        }
+    }
+
+    /**
+     * CRITICAL NEW: Revoke a single blob URL
+     */
+    revokeBlobURL(url) {
+        if (url && url.startsWith('blob:')) {
+            try {
+                URL.revokeObjectURL(url);
+                this.resources.blobURLs.delete(url);
+                this.debugLog(`🧹 Revoked blob URL: ${url.substring(0, 50)}...`, 'info');
+            } catch (error) {
+                this.debugLog(`⚠️ Failed to revoke blob URL: ${error.message}`, 'warning');
+            }
+        }
+    }
+
+    /**
+     * CRITICAL NEW: Revoke all blob URLs
+     */
+    revokeBlobURLs() {
+        this.resources.blobURLs.forEach(url => {
+            try {
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                // Silent fail
+            }
+        });
+        this.resources.blobURLs.clear();
+        this.debugLog(`🧹 Revoked all blob URLs`, 'info');
     }
 
     displayMetadata(metadata) {
@@ -1419,6 +1727,9 @@ class MusicPlayerApp {
                 this.managers.audioBuffer.clearAllBuffers();
             }
 
+            // CRITICAL: Revoke all blob URLs
+            this.revokeBlobURLs();
+
             this.state.playlist = [];
             this.state.currentTrackIndex = -1;
             
@@ -1474,6 +1785,11 @@ class MusicPlayerApp {
         if (this.managers.visualizerUI) {
             this.managers.visualizerUI.onPlayStateChange();
         }
+        
+        // CRITICAL: Tell performance manager about play state
+        if (this.managers.performance) {
+            this.managers.performance.setPlayState(true);
+        }
     }
 
     handlePause() {
@@ -1483,6 +1799,11 @@ class MusicPlayerApp {
         
         if (this.managers.visualizerUI) {
             this.managers.visualizerUI.onPlayStateChange();
+        }
+        
+        // CRITICAL: Tell performance manager about play state
+        if (this.managers.performance) {
+            this.managers.performance.setPlayState(false);
         }
     }
 
@@ -1657,10 +1978,70 @@ class MusicPlayerApp {
             }
         }
     }
+    
+    // ========== CRITICAL: CLEANUP & DESTROY ==========
+    
+    /**
+     * CRITICAL NEW: Destroy the app and clean up all resources
+     */
+    destroy() {
+        if (this.state.destroyed) {
+            this.debugLog('⚠️ App already destroyed', 'warning');
+            return;
+        }
+        
+        this.debugLog('🧹 Destroying MusicPlayerApp...', 'info');
+        
+        // Stop playback
+        if (this.elements.player) {
+            this.elements.player.pause();
+            this.elements.player.src = '';
+        }
+        
+        // Revoke all blob URLs
+        this.revokeBlobURLs();
+        
+        // Clear all intervals
+        this.resources.intervals.forEach(id => clearInterval(id));
+        this.resources.intervals.clear();
+        
+        // Clear all timeouts
+        this.resources.timeouts.forEach(id => clearTimeout(id));
+        this.resources.timeouts.clear();
+        
+        // Remove all event listeners
+        this.resources.eventListeners.forEach(({ element, event, handler }) => {
+            element.removeEventListener(event, handler);
+        });
+        this.resources.eventListeners = [];
+        
+        // Destroy all managers
+        if (this.managers.performance && typeof this.managers.performance.destroy === 'function') {
+            this.managers.performance.destroy();
+        }
+        
+        if (this.managers.visualizer && typeof this.managers.visualizer.destroy === 'function') {
+            this.managers.visualizer.destroy();
+        }
+        
+        if (this.managers.audioBuffer && typeof this.managers.audioBuffer.destroy === 'function') {
+            this.managers.audioBuffer.destroy();
+        }
+        
+        // Clear caches
+        if (this.colorCache) {
+            this.colorCache.clear();
+        }
+        
+        this.state.destroyed = true;
+        this.state.initialized = false;
+        
+        this.debugLog('✅ MusicPlayerApp destroyed successfully', 'success');
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎵 Initializing - FULLY INTEGRATED v1.2');
+    console.log('🎵 Initializing - MEMORY LEAK FIXED v2.0');
     window.musicPlayerApp = new MusicPlayerApp();
     window.musicPlayerApp.init();
 });
@@ -1682,4 +2063,4 @@ window.getAudioDataForVisualizer = () => {
     return null;
 };
 
-console.log('✅ Script loaded - All features integrated!');
+console.log('✅ Script loaded - MEMORY LEAK FIXED v2.0 - All features integrated!');
