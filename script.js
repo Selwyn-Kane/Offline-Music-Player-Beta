@@ -1,6 +1,6 @@
 /* ============================================
-   Ultimate Local Music Player - FULLY INTEGRATED v1.0
-   All 26 issues fixed through 7 core integrations
+   Ultimate Local Music Player - FULLY INTEGRATED v1.1
+   Fixed: Auto-EQ, EQ Presets, Volume Boost integration
    ============================================ */
 
 // ✅ CRITICAL: Audio Chain Reconnection Helper
@@ -174,7 +174,7 @@ class MusicPlayerApp {
                 this.managers.audioBuffer.setPlaylist(this.state.playlist);
             }
 
-            // ✅ FIX #1: Parsers - CRITICAL FOR METADATA
+            // ✅ Parsers - CRITICAL FOR METADATA
             if (typeof MetadataParser !== 'undefined') {
                 this.managers.metadata = new MetadataParser(debugLog);
             }
@@ -207,7 +207,7 @@ class MusicPlayerApp {
                 this.managers.folderPersistence = new FolderPersistence();
             }
 
-            // ✅ FIX #1: File loading with dependencies
+            // ✅ File loading with dependencies
             if (typeof EnhancedFileLoadingManager !== 'undefined') {
                 this.managers.fileLoading = new EnhancedFileLoadingManager(debugLog);
                 
@@ -225,7 +225,7 @@ class MusicPlayerApp {
                 this.debugLog('✅ FileLoadingManager initialized', 'success');
             }
 
-            // ✅ FIX #2: Playlist renderer - correct class
+            // ✅ Playlist renderer
             if (typeof EnhancedPlaylistRenderer !== 'undefined') {
                 this.managers.playlistRenderer = new EnhancedPlaylistRenderer(debugLog);
                 
@@ -246,7 +246,7 @@ class MusicPlayerApp {
                 this.debugLog('✅ EnhancedPlaylistRenderer initialized', 'success');
             }
 
-            // ✅ FIX #3: Lyrics manager with elements
+            // ✅ Lyrics manager
             if (typeof LyricsManager !== 'undefined') {
                 this.managers.lyrics = new LyricsManager(debugLog);
                 
@@ -279,6 +279,9 @@ class MusicPlayerApp {
                 this.debugLog('✅ LyricsManager initialized', 'success');
             }
 
+            // ❌ REMOVED: Wrong AutoEQManager creation
+            // AudioPresetsManager and AutoEQManager will be created in initializeAudioManagers()
+
             this.debugLog('✅ All managers initialized', 'success');
         } catch (error) {
             this.debugLog(`⚠️ Manager init warning: ${error.message}`, 'warning');
@@ -287,7 +290,7 @@ class MusicPlayerApp {
 
     initializeAudio() {
         try {
-            // ✅ FIX #4: Audio Pipeline with player
+            // ✅ Audio Pipeline with player
             if (typeof AudioPipeline !== 'undefined' && this.elements.player) {
                 this.managers.audioPipeline = new AudioPipeline(this.debugLog.bind(this));
                 this.managers.audioPipeline.init(this.elements.player);
@@ -303,6 +306,9 @@ class MusicPlayerApp {
                 
                 document.dispatchEvent(new CustomEvent('audioContextReady'));
                 this.debugLog('✅ AudioPipeline initialized', 'success');
+                
+                // ✅ NEW: Initialize audio-dependent managers NOW
+                this.initializeAudioManagers();
             }
 
             if (typeof VolumeControl !== 'undefined' && this.elements.player) {
@@ -328,10 +334,6 @@ class MusicPlayerApp {
                 this.managers.crossfade = new CrossfadeManager(this.elements.player, this.debugLog.bind(this));
             }
 
-            if (typeof AutoEQManager !== 'undefined') {
-                this.managers.autoEQ = new AutoEQManager(this.debugLog.bind(this));
-            }
-
             if (window.backgroundAudioHandler) {
                 this.initializeBackgroundAudio();
             }
@@ -340,6 +342,193 @@ class MusicPlayerApp {
         } catch (error) {
             this.debugLog(`⚠️ Audio init: ${error.message}`, 'warning');
         }
+    }
+
+    // ✅ NEW METHOD: Initialize audio-dependent managers
+    initializeAudioManagers() {
+        const debugLog = this.debugLog.bind(this);
+        
+        try {
+            // ✅ 1. Create AudioPresetsManager with filter references
+            if (typeof AudioPresetsManager !== 'undefined' && 
+                this.managers.audioPipeline?.isInitialized) {
+                
+                this.managers.audioPresets = new AudioPresetsManager(
+                    this.managers.audioPipeline.bassFilter,
+                    this.managers.audioPipeline.midFilter,
+                    this.managers.audioPipeline.trebleFilter,
+                    debugLog
+                );
+                
+                window.audioPresetsManager = this.managers.audioPresets;
+                
+                // Populate EQ preset dropdown
+                this.populateEQPresetDropdown();
+                
+                // Wire EQ preset selector
+                this.setupEQPresetSelector();
+                
+                // Load saved preset
+                this.managers.audioPresets.loadSavedPreset();
+                
+                this.debugLog('✅ AudioPresetsManager initialized', 'success');
+            }
+            
+            // ✅ 2. Create AutoEQManager with CORRECT arguments
+            if (typeof AutoEQManager !== 'undefined' && this.managers.audioPresets) {
+                this.managers.autoEQ = new AutoEQManager(
+                    this.managers.audioPresets,  // ✅ First arg: presetsManager
+                    debugLog                      // ✅ Second arg: debugLog
+                );
+                
+                window.autoEQManager = this.managers.autoEQ;
+                
+                // Wire Auto-EQ button
+                this.setupAutoEQButton();
+                
+                this.debugLog('✅ AutoEQManager initialized', 'success');
+            }
+            
+            // ✅ 3. Wire Volume Boost button
+            if (this.managers.volume) {
+                this.setupVolumeBoostButton();
+            }
+            
+            this.debugLog('✅ All audio managers wired', 'success');
+            
+        } catch (error) {
+            this.debugLog(`⚠️ Audio manager init: ${error.message}`, 'warning');
+            console.error(error);
+        }
+    }
+
+    // ✅ NEW METHOD: Populate EQ preset dropdown
+    populateEQPresetDropdown() {
+        const dropdown = document.getElementById('eq-preset-select');
+        if (!dropdown || !this.managers.audioPresets) return;
+        
+        const presets = this.managers.audioPresets.getPresetList();
+        
+        // Clear existing (except first "Select Preset..." option)
+        while (dropdown.options.length > 1) {
+            dropdown.remove(1);
+        }
+        
+        // Add all presets
+        presets.forEach(preset => {
+            const option = document.createElement('option');
+            option.value = preset.id;
+            option.textContent = preset.name;
+            option.title = `${preset.description}\n${preset.philosophy}`;
+            dropdown.appendChild(option);
+        });
+        
+        this.debugLog(`✅ Populated ${presets.length} EQ presets`, 'info');
+    }
+
+    // ✅ NEW METHOD: Setup EQ preset selector
+    setupEQPresetSelector() {
+        const dropdown = document.getElementById('eq-preset-select');
+        if (!dropdown || !this.managers.audioPresets) return;
+        
+        dropdown.addEventListener('change', (e) => {
+            const presetId = e.target.value;
+            if (!presetId) return;
+            
+            const track = this.state.playlist[this.state.currentTrackIndex];
+            const analysis = track?.analysis || null;
+            
+            this.managers.audioPresets.applyPreset(presetId, analysis);
+            this.managers.audioPresets.saveCurrentPreset();
+            
+            // Disable Auto-EQ when manually selecting
+            if (this.managers.autoEQ?.isEnabled()) {
+                this.managers.autoEQ.setEnabled(false);
+                const autoEQBtn = document.getElementById('auto-eq-button');
+                if (autoEQBtn) {
+                    autoEQBtn.classList.remove('active');
+                    autoEQBtn.querySelector('.sidebar-label').textContent = 'Auto-EQ Off';
+                }
+            }
+            
+            this.debugLog(`🎛️ Applied preset: ${presetId}`, 'success');
+        });
+    }
+
+    // ✅ NEW METHOD: Setup Auto-EQ button
+    setupAutoEQButton() {
+        const button = document.getElementById('auto-eq-button');
+        if (!button || !this.managers.autoEQ) return;
+        
+        // Load saved state
+        const savedState = localStorage.getItem('autoEQEnabled') === 'true';
+        if (savedState) {
+            this.managers.autoEQ.setEnabled(true);
+            button.classList.add('active');
+            button.querySelector('.sidebar-label').textContent = 'Auto-EQ On';
+        }
+        
+        // Enable button
+        button.disabled = false;
+        
+        // Click handler
+        button.addEventListener('click', () => {
+            const newState = this.managers.autoEQ.toggle();
+            
+            button.classList.toggle('active', newState);
+            button.querySelector('.sidebar-label').textContent = 
+                newState ? 'Auto-EQ On' : 'Auto-EQ Off';
+            
+            localStorage.setItem('autoEQEnabled', newState.toString());
+            
+            if (newState && this.state.currentTrackIndex !== -1) {
+                // Apply to current track immediately
+                const track = this.state.playlist[this.state.currentTrackIndex];
+                if (track) {
+                    this.managers.autoEQ.applyAutoEQ(track);
+                }
+            } else if (!newState) {
+                // Reset to flat when disabled
+                this.managers.audioPresets.reset();
+                const dropdown = document.getElementById('eq-preset-select');
+                if (dropdown) dropdown.value = 'flat';
+            }
+            
+            this.managers.ui?.showToast(
+                `Auto-EQ ${newState ? 'enabled' : 'disabled'}`, 
+                newState ? 'success' : 'info'
+            );
+        });
+    }
+
+    // ✅ NEW METHOD: Setup Volume Boost button
+    setupVolumeBoostButton() {
+        const button = document.getElementById('volume-boost-button');
+        if (!button || !this.managers.volume) return;
+        
+        // Load saved state
+        const savedBoost = this.managers.volume.isBoostEnabled();
+        if (savedBoost) {
+            button.classList.add('active');
+            button.querySelector('.sidebar-label').textContent = 'Boost On';
+        }
+        
+        // Click handler
+        button.addEventListener('click', () => {
+            const currentState = this.managers.volume.isBoostEnabled();
+            const newState = !currentState;
+            
+            this.managers.volume.setBoost(newState, 1.5);
+            
+            button.classList.toggle('active', newState);
+            button.querySelector('.sidebar-label').textContent = 
+                newState ? 'Boost On' : 'Boost Off';
+            
+            this.managers.ui?.showToast(
+                `Volume Boost ${newState ? 'enabled' : 'disabled'}`, 
+                newState ? 'success' : 'info'
+            );
+        });
     }
 
     async initializeBackgroundAudio() {
@@ -500,7 +689,7 @@ class MusicPlayerApp {
                 this.state.playlist = result.playlist;
                 this.state.currentTrackIndex = -1;
                 
-                // ✅ FIX #6: Update buffer manager
+                // Update buffer manager
                 if (this.managers.audioBuffer) {
                     this.managers.audioBuffer.setPlaylist(this.state.playlist);
                 }
@@ -511,7 +700,7 @@ class MusicPlayerApp {
                 this.managers.ui?.showToast(`Loaded ${result.playlist.length} tracks`, 'success');
                 this.startBackgroundAnalysis();
 
-                // ✅ FIX #5: Auto-play
+                // Auto-play first track
                 if (result.playlist.length > 0) {
                     this.loadTrack(0);
                 }
@@ -545,7 +734,7 @@ class MusicPlayerApp {
                 this.state.playlist = result.playlist;
                 this.state.currentTrackIndex = -1;
 
-                // ✅ FIX #6: Update buffer manager
+                // Update buffer manager
                 if (this.managers.audioBuffer) {
                     this.managers.audioBuffer.setPlaylist(this.state.playlist);
                 }
@@ -565,7 +754,7 @@ class MusicPlayerApp {
                 this.managers.ui?.showToast(`Loaded ${result.playlist.length} tracks`, 'success');
                 this.startBackgroundAnalysis();
 
-                // ✅ FIX #5: Auto-play
+                // Auto-play first track
                 if (result.playlist.length > 0) {
                     this.loadTrack(0);
                 }
@@ -592,6 +781,7 @@ class MusicPlayerApp {
             this.elements.trackTitle.textContent = track.fileName;
         }
 
+        // ✅ Apply volume for track
         if (this.managers.volume && track.metadata) {
             const trackId = `${track.metadata.artist || 'Unknown'}_${track.metadata.title || track.fileName}`;
             const hasAppliedSaved = this.managers.volume.applyTrackVolume(trackId);
@@ -600,10 +790,12 @@ class MusicPlayerApp {
             }
         }
 
-        if (this.managers.autoEQ && this.managers.autoEQ.enabled && track.analysis) {
+        // ✅ Apply Auto-EQ if enabled
+        if (this.managers.autoEQ && this.managers.autoEQ.isEnabled() && track.analysis) {
             this.managers.autoEQ.applyAutoEQ(track);
         }
 
+        // ✅ Set track analysis for visualizer
         if (this.managers.visualizer) {
             if (track.analysis) {
                 this.managers.visualizer.setTrackAnalysis(track.analysis);
@@ -631,7 +823,7 @@ class MusicPlayerApp {
                     this.elements.player.currentTime = track.analysis.silence.start;
                 }
 
-                // ✅ FIX #5: Auto-play
+                // Auto-play
                 this.elements.player.play().catch(e => 
                     this.debugLog(`Playback failed: ${e.message}`, 'warning')
                 );
@@ -641,7 +833,7 @@ class MusicPlayerApp {
                 this.elements.player.src = track.audioURL;
                 this.elements.player.load();
                 
-                // ✅ FIX #5: Auto-play fallback
+                // Auto-play fallback
                 this.elements.player.play().catch(e => 
                     this.debugLog(`Playback failed: ${e.message}`, 'warning')
                 );
@@ -650,7 +842,7 @@ class MusicPlayerApp {
             this.elements.player.src = track.audioURL;
             this.elements.player.load();
             
-            // ✅ FIX #5: Auto-play
+            // Auto-play
             this.elements.player.play().catch(e => 
                 this.debugLog(`Playback failed: ${e.message}`, 'warning')
             );
@@ -851,7 +1043,7 @@ class MusicPlayerApp {
             this.elements.currentTimeDisplay.textContent = this.formatTime(this.elements.player.currentTime);
         }
 
-        // ✅ FIX #7: Update lyrics
+        // Update lyrics
         if (this.managers.lyrics && this.managers.performance?.shouldUpdate('lyrics') !== false) {
             this.managers.lyrics.update(
                 this.elements.player.currentTime, 
@@ -1058,7 +1250,7 @@ class MusicPlayerApp {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎵 Initializing - FULLY INTEGRATED v1.0');
+    console.log('🎵 Initializing - FULLY INTEGRATED v1.1');
     window.musicPlayerApp = new MusicPlayerApp();
     window.musicPlayerApp.init();
 });
@@ -1080,4 +1272,4 @@ window.getAudioDataForVisualizer = () => {
     return null;
 };
 
-console.log('✅ Script loaded - All 7 critical fixes applied!');
+console.log('✅ Script loaded - All integration fixes applied!');
