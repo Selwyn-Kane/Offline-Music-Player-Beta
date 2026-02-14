@@ -415,12 +415,25 @@ class PerformanceManager {
     }
     
     applyQualityProfile() {
-        // Notify connected managers of quality changes
-        if (this.connectedManagers.visualizer) {
-            // Visualizer can adjust its settings based on quality profile
-            this.debugLog(`🎨 Quality profile applied: FFT=${this.qualityProfile.visualizer.fftSize}, Bars=${this.qualityProfile.visualizer.barCount}`, 'info');
-        }
+    if (!this.connectedManagers.visualizer) return;
+
+    // FIXED: Actually push the new profile to the visualizer instead of just logging
+    if (typeof this.connectedManagers.visualizer.setQualityProfile === 'function') {
+        this.connectedManagers.visualizer.setQualityProfile({
+            fftSize:        this.qualityProfile.visualizer.fftSize,
+            barCount:       this.qualityProfile.visualizer.barCount,
+            effects:        this.qualityProfile.visualizer.effects,
+            updateInterval: this.qualityProfile.visualizer.updateInterval
+        });
     }
+
+    this.debugLog(
+        `🎨 Quality profile applied: FFT=${this.qualityProfile.visualizer.fftSize}, ` +
+        `Bars=${this.qualityProfile.visualizer.barCount}, ` +
+        `Effects=${this.qualityProfile.visualizer.effects}`,
+        'info'
+    );
+}
     
     // ========== STATE MANAGEMENT (ENHANCED) ==========
     
