@@ -1,6 +1,6 @@
 /* ============================================
-   Ultimate Local Music Player - FULLY INTEGRATED v1.1
-   Fixed: Auto-EQ, EQ Presets, Volume Boost integration
+   Ultimate Local Music Player - FULLY INTEGRATED v1.2
+   Fixed: All sidebar features, keyboard shortcuts, UI modes
    ============================================ */
 
 // ✅ CRITICAL: Audio Chain Reconnection Helper
@@ -69,7 +69,9 @@ class MusicPlayerApp {
             compactMode: 'full',
             folderHandle: null,
             backgroundAnalysisRunning: false,
-            visualizerEnabled: true
+            visualizerEnabled: true,
+            stickyMode: false,
+            pipActive: false
         };
 
         this.config = {
@@ -89,6 +91,8 @@ class MusicPlayerApp {
             await this.initializeManagers();
             this.initializeAudio();
             this.setupEventListeners();
+            this.setupKeyboardShortcuts();
+            this.setupSidebarButtons();
             await this.restoreState();
             this.debugLog('✅ Music player initialized successfully', 'success');
         } catch (error) {
@@ -100,6 +104,7 @@ class MusicPlayerApp {
     cacheElements() {
         this.elements = {
             player: document.getElementById('audio-player'),
+            playPauseButton: document.getElementById('play-pause-button'),
             loadButton: document.getElementById('load-button'),
             folderButton: document.getElementById('folder-button'),
             prevButton: document.getElementById('prev-button'),
@@ -138,7 +143,10 @@ class MusicPlayerApp {
             fullscreenLyricsToggle: document.getElementById('fullscreen-lyrics-toggle'),
             fullscreenLyricsCloseBtn: document.getElementById('lyrics-close-btn'),
             fullscreenLyricsPrevBtn: document.getElementById('lyrics-prev-btn'),
-            fullscreenLyricsNextBtn: document.getElementById('lyrics-next-btn')
+            fullscreenLyricsNextBtn: document.getElementById('lyrics-next-btn'),
+            metadataContainer: document.getElementById('metadata-container'),
+            mainContent: document.getElementById('main-content'),
+            pipVideo: document.getElementById('pip-video')
         };
 
         if (this.elements.canvas) {
@@ -174,7 +182,6 @@ class MusicPlayerApp {
                 this.managers.audioBuffer.setPlaylist(this.state.playlist);
             }
 
-            // ✅ Parsers - CRITICAL FOR METADATA
             if (typeof MetadataParser !== 'undefined') {
                 this.managers.metadata = new MetadataParser(debugLog);
             }
@@ -207,7 +214,6 @@ class MusicPlayerApp {
                 this.managers.folderPersistence = new FolderPersistence();
             }
 
-            // ✅ File loading with dependencies
             if (typeof EnhancedFileLoadingManager !== 'undefined') {
                 this.managers.fileLoading = new EnhancedFileLoadingManager(debugLog);
                 
@@ -225,7 +231,6 @@ class MusicPlayerApp {
                 this.debugLog('✅ FileLoadingManager initialized', 'success');
             }
 
-            // ✅ Playlist renderer
             if (typeof EnhancedPlaylistRenderer !== 'undefined') {
                 this.managers.playlistRenderer = new EnhancedPlaylistRenderer(debugLog);
                 
@@ -246,7 +251,6 @@ class MusicPlayerApp {
                 this.debugLog('✅ EnhancedPlaylistRenderer initialized', 'success');
             }
 
-            // ✅ Lyrics manager
             if (typeof LyricsManager !== 'undefined') {
                 this.managers.lyrics = new LyricsManager(debugLog);
                 
@@ -279,9 +283,6 @@ class MusicPlayerApp {
                 this.debugLog('✅ LyricsManager initialized', 'success');
             }
 
-            // ❌ REMOVED: Wrong AutoEQManager creation
-            // AudioPresetsManager and AutoEQManager will be created in initializeAudioManagers()
-
             this.debugLog('✅ All managers initialized', 'success');
         } catch (error) {
             this.debugLog(`⚠️ Manager init warning: ${error.message}`, 'warning');
@@ -290,7 +291,6 @@ class MusicPlayerApp {
 
     initializeAudio() {
         try {
-            // ✅ Audio Pipeline with player
             if (typeof AudioPipeline !== 'undefined' && this.elements.player) {
                 this.managers.audioPipeline = new AudioPipeline(this.debugLog.bind(this));
                 this.managers.audioPipeline.init(this.elements.player);
@@ -307,7 +307,6 @@ class MusicPlayerApp {
                 document.dispatchEvent(new CustomEvent('audioContextReady'));
                 this.debugLog('✅ AudioPipeline initialized', 'success');
                 
-                // ✅ NEW: Initialize audio-dependent managers NOW
                 this.initializeAudioManagers();
             }
 
@@ -328,6 +327,56 @@ class MusicPlayerApp {
                     );
                     this.managers.visualizer.start();
                 }
+                
+                // Initialize fullscreen visualizer UI controller
+                if (typeof VisualizerUIController !== 'undefined') {
+                    this.managers.visualizerUI = new VisualizerUIController(
+                        this.managers.visualizer,
+                        this.debugLog.bind(this)
+                    );
+                    
+                    this.managers.visualizerUI.init({
+                        toggle: 'fullscreen-viz-toggle',
+                        container: 'fullscreen-visualizer',
+                        canvas: 'fullscreen-viz-canvas',
+                        modeBtn: 'viz-mode-btn',
+                        prevBtn: 'viz-prev-btn',
+                        playPauseBtn: 'viz-play-pause-btn',
+                        nextBtn: 'viz-next-btn',
+                        closeBtn: 'viz-close-btn',
+                        title: '.fullscreen-viz-title',
+                        artist: '.fullscreen-viz-artist',
+                        currentTime: 'viz-current-time',
+                        duration: 'viz-duration'
+                    });
+                    
+                    this.managers.visualizerUI.setCallbacks({
+                        onPrevious: () => this.playPrevious(),
+                        onNext: () => this.playNext(),
+                        onPlayPause: () => this.togglePlayPause(),
+                        getTrackInfo: () => {
+                            if (this.state.currentTrackIndex === -1) return {};
+                            const track = this.state.playlist[this.state.currentTrackIndex];
+                            return {
+                                title: track.metadata?.title || track.fileName,
+                                artist: track.metadata?.artist || 'Unknown Artist'
+                            };
+                        },
+                        getCurrentTime: () => this.elements.player.currentTime,
+                        getDuration: () => this.elements.player.duration,
+                        isPaused: () => this.elements.player.paused,
+                        getAudioData: () => {
+                            if (!this.managers.audioPipeline?.isInitialized) return null;
+                            return {
+                                analyser: this.managers.audioPipeline.analyser,
+                                dataArray: this.managers.audioPipeline.dataArray,
+                                bufferLength: this.managers.audioPipeline.bufferLength
+                            };
+                        }
+                    });
+                    
+                    this.debugLog('✅ VisualizerUIController initialized', 'success');
+                }
             }
 
             if (typeof CrossfadeManager !== 'undefined') {
@@ -344,12 +393,10 @@ class MusicPlayerApp {
         }
     }
 
-    // ✅ NEW METHOD: Initialize audio-dependent managers
     initializeAudioManagers() {
         const debugLog = this.debugLog.bind(this);
         
         try {
-            // ✅ 1. Create AudioPresetsManager with filter references
             if (typeof AudioPresetsManager !== 'undefined' && 
                 this.managers.audioPipeline?.isInitialized) {
                 
@@ -362,39 +409,22 @@ class MusicPlayerApp {
                 
                 window.audioPresetsManager = this.managers.audioPresets;
                 
-                // Populate EQ preset dropdown
                 this.populateEQPresetDropdown();
-                
-                // Wire EQ preset selector
                 this.setupEQPresetSelector();
-                
-                // Load saved preset
                 this.managers.audioPresets.loadSavedPreset();
                 
                 this.debugLog('✅ AudioPresetsManager initialized', 'success');
             }
             
-            // ✅ 2. Create AutoEQManager with CORRECT arguments
             if (typeof AutoEQManager !== 'undefined' && this.managers.audioPresets) {
                 this.managers.autoEQ = new AutoEQManager(
-                    this.managers.audioPresets,  // ✅ First arg: presetsManager
-                    debugLog                      // ✅ Second arg: debugLog
+                    this.managers.audioPresets,
+                    debugLog
                 );
                 
                 window.autoEQManager = this.managers.autoEQ;
-                
-                // Wire Auto-EQ button
-                this.setupAutoEQButton();
-                
                 this.debugLog('✅ AutoEQManager initialized', 'success');
             }
-            
-            // ✅ 3. Wire Volume Boost button
-            if (this.managers.volume) {
-                this.setupVolumeBoostButton();
-            }
-            
-            this.debugLog('✅ All audio managers wired', 'success');
             
         } catch (error) {
             this.debugLog(`⚠️ Audio manager init: ${error.message}`, 'warning');
@@ -402,19 +432,16 @@ class MusicPlayerApp {
         }
     }
 
-    // ✅ NEW METHOD: Populate EQ preset dropdown
     populateEQPresetDropdown() {
         const dropdown = document.getElementById('eq-preset-select');
         if (!dropdown || !this.managers.audioPresets) return;
         
         const presets = this.managers.audioPresets.getPresetList();
         
-        // Clear existing (except first "Select Preset..." option)
         while (dropdown.options.length > 1) {
             dropdown.remove(1);
         }
         
-        // Add all presets
         presets.forEach(preset => {
             const option = document.createElement('option');
             option.value = preset.id;
@@ -426,7 +453,6 @@ class MusicPlayerApp {
         this.debugLog(`✅ Populated ${presets.length} EQ presets`, 'info');
     }
 
-    // ✅ NEW METHOD: Setup EQ preset selector
     setupEQPresetSelector() {
         const dropdown = document.getElementById('eq-preset-select');
         if (!dropdown || !this.managers.audioPresets) return;
@@ -441,7 +467,6 @@ class MusicPlayerApp {
             this.managers.audioPresets.applyPreset(presetId, analysis);
             this.managers.audioPresets.saveCurrentPreset();
             
-            // Disable Auto-EQ when manually selecting
             if (this.managers.autoEQ?.isEnabled()) {
                 this.managers.autoEQ.setEnabled(false);
                 const autoEQBtn = document.getElementById('auto-eq-button');
@@ -455,12 +480,25 @@ class MusicPlayerApp {
         });
     }
 
-    // ✅ NEW METHOD: Setup Auto-EQ button
+    setupSidebarButtons() {
+        this.setupAutoEQButton();
+        this.setupVolumeBoostButton();
+        this.setupCrossfadeButton();
+        this.setupDebugButton();
+        this.setupCompactToggle();
+        this.setupPiPToggle();
+        this.setupStickyToggle();
+        this.setupStorageStatsButton();
+        this.setupCustomBackgroundButton();
+        this.setupClearCacheButton();
+        
+        this.debugLog('✅ All sidebar buttons configured', 'success');
+    }
+
     setupAutoEQButton() {
         const button = document.getElementById('auto-eq-button');
         if (!button || !this.managers.autoEQ) return;
         
-        // Load saved state
         const savedState = localStorage.getItem('autoEQEnabled') === 'true';
         if (savedState) {
             this.managers.autoEQ.setEnabled(true);
@@ -468,10 +506,8 @@ class MusicPlayerApp {
             button.querySelector('.sidebar-label').textContent = 'Auto-EQ On';
         }
         
-        // Enable button
         button.disabled = false;
         
-        // Click handler
         button.addEventListener('click', () => {
             const newState = this.managers.autoEQ.toggle();
             
@@ -482,13 +518,11 @@ class MusicPlayerApp {
             localStorage.setItem('autoEQEnabled', newState.toString());
             
             if (newState && this.state.currentTrackIndex !== -1) {
-                // Apply to current track immediately
                 const track = this.state.playlist[this.state.currentTrackIndex];
                 if (track) {
                     this.managers.autoEQ.applyAutoEQ(track);
                 }
             } else if (!newState) {
-                // Reset to flat when disabled
                 this.managers.audioPresets.reset();
                 const dropdown = document.getElementById('eq-preset-select');
                 if (dropdown) dropdown.value = 'flat';
@@ -501,19 +535,16 @@ class MusicPlayerApp {
         });
     }
 
-    // ✅ NEW METHOD: Setup Volume Boost button
     setupVolumeBoostButton() {
         const button = document.getElementById('volume-boost-button');
         if (!button || !this.managers.volume) return;
         
-        // Load saved state
         const savedBoost = this.managers.volume.isBoostEnabled();
         if (savedBoost) {
             button.classList.add('active');
             button.querySelector('.sidebar-label').textContent = 'Boost On';
         }
         
-        // Click handler
         button.addEventListener('click', () => {
             const currentState = this.managers.volume.isBoostEnabled();
             const newState = !currentState;
@@ -529,6 +560,385 @@ class MusicPlayerApp {
                 newState ? 'success' : 'info'
             );
         });
+    }
+
+    setupCrossfadeButton() {
+        const button = document.getElementById('crossfade-button');
+        if (!button || !this.managers.crossfade) return;
+        
+        const savedState = localStorage.getItem('crossfadeEnabled') === 'true';
+        if (savedState) {
+            this.managers.crossfade.setEnabled(true);
+            button.classList.add('active');
+            button.querySelector('.sidebar-label').textContent = 'Crossfade On';
+        }
+        
+        button.disabled = false;
+        
+        button.addEventListener('click', () => {
+            const newState = !this.managers.crossfade.enabled;
+            this.managers.crossfade.setEnabled(newState);
+            
+            button.classList.toggle('active', newState);
+            button.querySelector('.sidebar-label').textContent = 
+                newState ? 'Crossfade On' : 'Crossfade Off';
+            
+            localStorage.setItem('crossfadeEnabled', newState.toString());
+            
+            this.managers.ui?.showToast(
+                `Crossfade ${newState ? 'enabled' : 'disabled'}`, 
+                newState ? 'success' : 'info'
+            );
+        });
+    }
+
+    setupDebugButton() {
+        const button = document.getElementById('debug-toggle');
+        if (!button) return;
+        
+        button.addEventListener('click', () => {
+            this.state.debugMode = !this.state.debugMode;
+            button.classList.toggle('active', this.state.debugMode);
+            
+            if (this.elements.debugPanel) {
+                this.elements.debugPanel.classList.toggle('visible', this.state.debugMode);
+            }
+            
+            this.debugLog(`Debug mode: ${this.state.debugMode ? 'ON' : 'OFF'}`, 'info');
+        });
+    }
+
+    setupCompactToggle() {
+        const button = document.getElementById('compact-toggle');
+        if (!button) return;
+        
+        const savedMode = localStorage.getItem('compactMode') || 'full';
+        this.state.compactMode = savedMode;
+        this.applyCompactMode(savedMode);
+        
+        button.addEventListener('click', () => {
+            const modes = ['full', 'compact', 'mini'];
+            const currentIndex = modes.indexOf(this.state.compactMode);
+            const newMode = modes[(currentIndex + 1) % modes.length];
+            
+            this.state.compactMode = newMode;
+            this.applyCompactMode(newMode);
+            
+            localStorage.setItem('compactMode', newMode);
+            
+            const modeNames = { full: 'Full View', compact: 'Compact', mini: 'Mini' };
+            button.querySelector('.sidebar-label').textContent = modeNames[newMode];
+            
+            this.managers.ui?.showToast(`View: ${modeNames[newMode]}`, 'info');
+        });
+    }
+
+    applyCompactMode(mode) {
+        if (!this.elements.mainContent) return;
+        
+        this.elements.mainContent.classList.remove('compact-mode', 'mini-mode');
+        
+        if (mode === 'compact') {
+            this.elements.mainContent.classList.add('compact-mode');
+        } else if (mode === 'mini') {
+            this.elements.mainContent.classList.add('mini-mode');
+        }
+        
+        if (this.managers.performance) {
+            this.managers.performance.setMode(mode);
+        }
+    }
+
+    setupPiPToggle() {
+        const button = document.getElementById('pip-toggle');
+        if (!button) return;
+        
+        button.addEventListener('click', async () => {
+            try {
+                if (this.state.pipActive) {
+                    if (document.pictureInPictureElement) {
+                        await document.exitPictureInPicture();
+                    }
+                    this.state.pipActive = false;
+                    button.classList.remove('active');
+                    this.managers.ui?.showToast('PiP disabled', 'info');
+                } else {
+                    if (!this.elements.pipVideo) {
+                        this.managers.ui?.showToast('PiP not available', 'error');
+                        return;
+                    }
+                    
+                    const canvas = this.elements.canvas;
+                    if (canvas) {
+                        const stream = canvas.captureStream(30);
+                        this.elements.pipVideo.srcObject = stream;
+                        await this.elements.pipVideo.play();
+                        await this.elements.pipVideo.requestPictureInPicture();
+                        
+                        this.state.pipActive = true;
+                        button.classList.add('active');
+                        this.managers.ui?.showToast('PiP enabled', 'success');
+                    }
+                }
+            } catch (error) {
+                this.debugLog(`PiP error: ${error.message}`, 'error');
+                this.managers.ui?.showToast('PiP not supported', 'error');
+            }
+        });
+    }
+
+    setupStickyToggle() {
+        const button = document.getElementById('sticky-toggle');
+        if (!button) return;
+        
+        const savedState = localStorage.getItem('stickyMode') === 'true';
+        if (savedState) {
+            this.state.stickyMode = true;
+            button.classList.add('active');
+            button.querySelector('.sidebar-label').textContent = 'Sticky On';
+            this.applyStickyMode(true);
+        }
+        
+        button.addEventListener('click', () => {
+            this.state.stickyMode = !this.state.stickyMode;
+            
+            button.classList.toggle('active', this.state.stickyMode);
+            button.querySelector('.sidebar-label').textContent = 
+                this.state.stickyMode ? 'Sticky On' : 'Sticky Off';
+            
+            localStorage.setItem('stickyMode', this.state.stickyMode.toString());
+            
+            this.applyStickyMode(this.state.stickyMode);
+            
+            this.managers.ui?.showToast(
+                `Sticky mode ${this.state.stickyMode ? 'enabled' : 'disabled'}`, 
+                this.state.stickyMode ? 'success' : 'info'
+            );
+        });
+    }
+
+    applyStickyMode(enabled) {
+        if (!this.elements.metadataContainer) return;
+        
+        if (enabled) {
+            this.elements.metadataContainer.classList.add('sticky-mode');
+            const closeBtn = this.elements.metadataContainer.querySelector('.sticky-close');
+            if (closeBtn) closeBtn.style.display = 'block';
+        } else {
+            this.elements.metadataContainer.classList.remove('sticky-mode');
+            const closeBtn = this.elements.metadataContainer.querySelector('.sticky-close');
+            if (closeBtn) closeBtn.style.display = 'none';
+        }
+    }
+
+    setupStorageStatsButton() {
+        const button = document.getElementById('storage-stats-btn');
+        if (!button) return;
+        
+        button.addEventListener('click', async () => {
+            try {
+                let message = '💾 Storage Information\n\n';
+                
+                if (navigator.storage && navigator.storage.estimate) {
+                    const estimate = await navigator.storage.estimate();
+                    const usage = (estimate.usage / 1024 / 1024).toFixed(2);
+                    const quota = (estimate.quota / 1024 / 1024).toFixed(2);
+                    const percent = ((estimate.usage / estimate.quota) * 100).toFixed(1);
+                    
+                    message += `Used: ${usage} MB\n`;
+                    message += `Total: ${quota} MB\n`;
+                    message += `Usage: ${percent}%\n\n`;
+                }
+                
+                if (this.managers.audioBuffer) {
+                    const stats = this.managers.audioBuffer.getStats();
+                    message += `Audio Buffer:\n`;
+                    message += `- Memory: ${stats.memoryUsedMB}\n`;
+                    message += `- Cached: ${stats.cachedTracks} tracks\n`;
+                    message += `- Hit rate: ${stats.hitRate}\n`;
+                }
+                
+                alert(message);
+            } catch (error) {
+                this.debugLog(`Storage stats error: ${error.message}`, 'error');
+                alert('Storage information not available');
+            }
+        });
+    }
+
+    setupCustomBackgroundButton() {
+        const button = document.getElementById('custom-bg-button');
+        if (!button) return;
+        
+        button.addEventListener('click', () => {
+            if (typeof window.customBackground !== 'undefined' && window.customBackground.openPicker) {
+                window.customBackground.openPicker();
+            } else {
+                this.managers.ui?.showToast('Background picker not available', 'error');
+            }
+        });
+    }
+
+    setupClearCacheButton() {
+        const button = document.getElementById('clear-cache-btn');
+        if (!button) return;
+        
+        button.addEventListener('click', async () => {
+            if (!confirm('Clear all cached data? This will not delete your playlist.')) {
+                return;
+            }
+            
+            try {
+                if (this.managers.audioBuffer) {
+                    this.managers.audioBuffer.clearAllBuffers();
+                }
+                
+                if (this.colorCache) {
+                    this.colorCache.clear();
+                }
+                
+                if ('caches' in window) {
+                    const cacheNames = await caches.keys();
+                    await Promise.all(cacheNames.map(name => caches.delete(name)));
+                }
+                
+                this.managers.ui?.showToast('Cache cleared successfully', 'success');
+                this.debugLog('✅ Cache cleared', 'success');
+            } catch (error) {
+                this.debugLog(`Cache clear error: ${error.message}`, 'error');
+                this.managers.ui?.showToast('Error clearing cache', 'error');
+            }
+        });
+    }
+
+    setupKeyboardShortcuts() {
+        document.addEventListener('keydown', (e) => {
+            // Ignore if typing in input fields
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+                return;
+            }
+            
+            const key = e.key.toLowerCase();
+            
+            switch (key) {
+                case ' ':
+                    e.preventDefault();
+                    this.togglePlayPause();
+                    break;
+                    
+                case 'arrowright':
+                    e.preventDefault();
+                    if (e.shiftKey) {
+                        this.playNext();
+                    } else {
+                        this.seekForward();
+                    }
+                    break;
+                    
+                case 'arrowleft':
+                    e.preventDefault();
+                    if (e.shiftKey) {
+                        this.playPrevious();
+                    } else {
+                        this.seekBackward();
+                    }
+                    break;
+                    
+                case 'arrowup':
+                    e.preventDefault();
+                    if (this.managers.volume) {
+                        this.managers.volume.increaseVolume(0.1);
+                    }
+                    break;
+                    
+                case 'arrowdown':
+                    e.preventDefault();
+                    if (this.managers.volume) {
+                        this.managers.volume.decreaseVolume(0.1);
+                    }
+                    break;
+                    
+                case 'm':
+                    e.preventDefault();
+                    if (this.managers.volume) {
+                        this.managers.volume.toggleMute();
+                    }
+                    break;
+                    
+                case 's':
+                    e.preventDefault();
+                    this.toggleShuffle();
+                    break;
+                    
+                case 'l':
+                    e.preventDefault();
+                    this.cycleLoopMode();
+                    break;
+                    
+                case 'f':
+                    if (this.managers.lyrics) {
+                        e.preventDefault();
+                        this.managers.lyrics.toggleFullscreen();
+                    }
+                    break;
+                    
+                case 'v':
+                    if (this.managers.visualizerUI) {
+                        e.preventDefault();
+                        this.managers.visualizerUI.toggleFullscreen();
+                    }
+                    break;
+                    
+                case 'd':
+                    e.preventDefault();
+                    this.state.debugMode = !this.state.debugMode;
+                    const debugBtn = document.getElementById('debug-toggle');
+                    if (debugBtn) debugBtn.classList.toggle('active', this.state.debugMode);
+                    if (this.elements.debugPanel) {
+                        this.elements.debugPanel.classList.toggle('visible', this.state.debugMode);
+                    }
+                    break;
+                    
+                case 'c':
+                    e.preventDefault();
+                    const modes = ['full', 'compact', 'mini'];
+                    const currentIndex = modes.indexOf(this.state.compactMode);
+                    const newMode = modes[(currentIndex + 1) % modes.length];
+                    this.state.compactMode = newMode;
+                    this.applyCompactMode(newMode);
+                    localStorage.setItem('compactMode', newMode);
+                    break;
+            }
+        });
+        
+        this.debugLog('✅ Keyboard shortcuts enabled', 'success');
+    }
+
+    togglePlayPause() {
+        if (!this.elements.player) return;
+        
+        if (this.elements.player.paused) {
+            this.elements.player.play().catch(e => 
+                this.debugLog(`Play failed: ${e.message}`, 'error')
+            );
+        } else {
+            this.elements.player.pause();
+        }
+    }
+
+    seekForward() {
+        if (!this.elements.player) return;
+        const newTime = Math.min(
+            this.elements.player.currentTime + 5,
+            this.elements.player.duration || 0
+        );
+        this.elements.player.currentTime = newTime;
+    }
+
+    seekBackward() {
+        if (!this.elements.player) return;
+        const newTime = Math.max(this.elements.player.currentTime - 5, 0);
+        this.elements.player.currentTime = newTime;
     }
 
     async initializeBackgroundAudio() {
@@ -575,6 +985,10 @@ class MusicPlayerApp {
             this.elements.nextButton.addEventListener('click', () => this.playNext());
         }
 
+        if (this.elements.playPauseButton) {
+            this.elements.playPauseButton.addEventListener('click', () => this.togglePlayPause());
+        }
+
         if (this.elements.shuffleButton) {
             this.elements.shuffleButton.addEventListener('click', () => this.toggleShuffle());
         }
@@ -592,15 +1006,6 @@ class MusicPlayerApp {
         }
 
         this.setupEqualizer();
-
-        if (this.elements.debugToggle) {
-            this.elements.debugToggle.addEventListener('change', (e) => {
-                this.state.debugMode = e.target.checked;
-                if (this.elements.debugPanel) {
-                    this.elements.debugPanel.classList.toggle('visible', this.state.debugMode);
-                }
-            });
-        }
 
         this.debugLog('✅ Event listeners registered', 'success');
     }
@@ -689,7 +1094,6 @@ class MusicPlayerApp {
                 this.state.playlist = result.playlist;
                 this.state.currentTrackIndex = -1;
                 
-                // Update buffer manager
                 if (this.managers.audioBuffer) {
                     this.managers.audioBuffer.setPlaylist(this.state.playlist);
                 }
@@ -700,7 +1104,6 @@ class MusicPlayerApp {
                 this.managers.ui?.showToast(`Loaded ${result.playlist.length} tracks`, 'success');
                 this.startBackgroundAnalysis();
 
-                // Auto-play first track
                 if (result.playlist.length > 0) {
                     this.loadTrack(0);
                 }
@@ -734,7 +1137,6 @@ class MusicPlayerApp {
                 this.state.playlist = result.playlist;
                 this.state.currentTrackIndex = -1;
 
-                // Update buffer manager
                 if (this.managers.audioBuffer) {
                     this.managers.audioBuffer.setPlaylist(this.state.playlist);
                 }
@@ -754,7 +1156,6 @@ class MusicPlayerApp {
                 this.managers.ui?.showToast(`Loaded ${result.playlist.length} tracks`, 'success');
                 this.startBackgroundAnalysis();
 
-                // Auto-play first track
                 if (result.playlist.length > 0) {
                     this.loadTrack(0);
                 }
@@ -781,7 +1182,6 @@ class MusicPlayerApp {
             this.elements.trackTitle.textContent = track.fileName;
         }
 
-        // ✅ Apply volume for track
         if (this.managers.volume && track.metadata) {
             const trackId = `${track.metadata.artist || 'Unknown'}_${track.metadata.title || track.fileName}`;
             const hasAppliedSaved = this.managers.volume.applyTrackVolume(trackId);
@@ -790,18 +1190,20 @@ class MusicPlayerApp {
             }
         }
 
-        // ✅ Apply Auto-EQ if enabled
         if (this.managers.autoEQ && this.managers.autoEQ.isEnabled() && track.analysis) {
             this.managers.autoEQ.applyAutoEQ(track);
         }
 
-        // ✅ Set track analysis for visualizer
         if (this.managers.visualizer) {
             if (track.analysis) {
                 this.managers.visualizer.setTrackAnalysis(track.analysis);
             } else {
                 this.managers.visualizer.clearTrackAnalysis();
             }
+        }
+        
+        if (this.managers.visualizerUI) {
+            this.managers.visualizerUI.onTrackChange();
         }
 
         if (this.managers.audioBuffer && track.file) {
@@ -823,7 +1225,6 @@ class MusicPlayerApp {
                     this.elements.player.currentTime = track.analysis.silence.start;
                 }
 
-                // Auto-play
                 this.elements.player.play().catch(e => 
                     this.debugLog(`Playback failed: ${e.message}`, 'warning')
                 );
@@ -833,7 +1234,6 @@ class MusicPlayerApp {
                 this.elements.player.src = track.audioURL;
                 this.elements.player.load();
                 
-                // Auto-play fallback
                 this.elements.player.play().catch(e => 
                     this.debugLog(`Playback failed: ${e.message}`, 'warning')
                 );
@@ -842,7 +1242,6 @@ class MusicPlayerApp {
             this.elements.player.src = track.audioURL;
             this.elements.player.load();
             
-            // Auto-play
             this.elements.player.play().catch(e => 
                 this.debugLog(`Playback failed: ${e.message}`, 'warning')
             );
@@ -1043,12 +1442,15 @@ class MusicPlayerApp {
             this.elements.currentTimeDisplay.textContent = this.formatTime(this.elements.player.currentTime);
         }
 
-        // Update lyrics
         if (this.managers.lyrics && this.managers.performance?.shouldUpdate('lyrics') !== false) {
             this.managers.lyrics.update(
                 this.elements.player.currentTime, 
                 this.state.compactMode
             );
+        }
+        
+        if (this.managers.visualizerUI) {
+            this.managers.visualizerUI.onTimeUpdate();
         }
     }
 
@@ -1068,11 +1470,19 @@ class MusicPlayerApp {
         if (window.backgroundAudioHandler) {
             backgroundAudioHandler.updatePlaybackState('playing');
         }
+        
+        if (this.managers.visualizerUI) {
+            this.managers.visualizerUI.onPlayStateChange();
+        }
     }
 
     handlePause() {
         if (window.backgroundAudioHandler) {
             backgroundAudioHandler.updatePlaybackState('paused');
+        }
+        
+        if (this.managers.visualizerUI) {
+            this.managers.visualizerUI.onPlayStateChange();
         }
     }
 
@@ -1250,7 +1660,7 @@ class MusicPlayerApp {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎵 Initializing - FULLY INTEGRATED v1.1');
+    console.log('🎵 Initializing - FULLY INTEGRATED v1.2');
     window.musicPlayerApp = new MusicPlayerApp();
     window.musicPlayerApp.init();
 });
@@ -1272,4 +1682,4 @@ window.getAudioDataForVisualizer = () => {
     return null;
 };
 
-console.log('✅ Script loaded - All integration fixes applied!');
+console.log('✅ Script loaded - All features integrated!');
