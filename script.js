@@ -92,7 +92,7 @@ class MusicPlayerApp {
             await this.restoreState();
             this.debugLog('✅ Music player initialized successfully', 'success');
         } catch (error) {
-            this.debugLog(\`❌ Initialization error: \${error.message}\`, 'error');
+            this.debugLog(`❌ Initialization error: ${error.message}`, 'error');
             console.error(error);
         }
     }
@@ -281,7 +281,7 @@ class MusicPlayerApp {
 
             this.debugLog('✅ All managers initialized', 'success');
         } catch (error) {
-            this.debugLog(\`⚠️ Manager init warning: \${error.message}\`, 'warning');
+            this.debugLog(`⚠️ Manager init warning: ${error.message}`, 'warning');
         }
     }
 
@@ -338,7 +338,7 @@ class MusicPlayerApp {
 
             this.debugLog('✅ Audio system initialized', 'success');
         } catch (error) {
-            this.debugLog(\`⚠️ Audio init: \${error.message}\`, 'warning');
+            this.debugLog(`⚠️ Audio init: ${error.message}`, 'warning');
         }
     }
 
@@ -358,7 +358,7 @@ class MusicPlayerApp {
                 this.debugLog('✅ Background audio activated', 'success');
             }
         } catch (error) {
-            this.debugLog(\`⚠️ Background audio: \${error.message}\`, 'warning');
+            this.debugLog(`⚠️ Background audio: ${error.message}`, 'warning');
         }
     }
 
@@ -428,7 +428,7 @@ class MusicPlayerApp {
             seekDebounce = setTimeout(() => {
                 if (wasPlaying) {
                     this.elements.player.play().catch(err => 
-                        this.debugLog(\`Resume error: \${err.message}\`, 'error')
+                        this.debugLog(`Resume error: ${err.message}`, 'error')
                     );
                 }
             }, this.config.SEEK_DEBOUNCE_DELAY_MS);
@@ -447,7 +447,7 @@ class MusicPlayerApp {
                 try {
                     this.elements.player.currentTime = newTime;
                 } catch (err) {
-                    this.debugLog(\`Seek failed: \${err.message}\`, 'error');
+                    this.debugLog(`Seek failed: ${err.message}`, 'error');
                 }
             }
         });
@@ -460,7 +460,7 @@ class MusicPlayerApp {
         percent = Math.max(0, Math.min(1, percent));
         
         const newTime = percent * this.elements.player.duration;
-        this.elements.progressBar.style.width = \`\${percent * 100}%\`;
+        this.elements.progressBar.style.width = `${percent * 100}%`;
         this.elements.currentTimeDisplay.textContent = this.formatTime(newTime);
         return newTime;
     }
@@ -477,7 +477,7 @@ class MusicPlayerApp {
             
             slider.addEventListener('input', (e) => {
                 const value = parseFloat(e.target.value);
-                if (display) display.textContent = \`\${value > 0 ? '+' : ''}\${value} dB\`;
+                if (display) display.textContent = `${value > 0 ? '+' : ''}${value} dB`;
                 this.updateEqualizer(type, value);
             });
         });
@@ -508,7 +508,7 @@ class MusicPlayerApp {
                 this.updatePlaylist();
                 this.savePlaylistToStorage();
                 
-                this.managers.ui?.showToast(\`Loaded \${result.playlist.length} tracks\`, 'success');
+                this.managers.ui?.showToast(`Loaded ${result.playlist.length} tracks`, 'success');
                 this.startBackgroundAnalysis();
 
                 // ✅ FIX #5: Auto-play
@@ -518,7 +518,7 @@ class MusicPlayerApp {
             }
         } catch (error) {
             if (error.name !== 'AbortError') {
-                this.debugLog(\`Error loading: \${error.message}\`, 'error');
+                this.debugLog(`Error loading: ${error.message}`, 'error');
             }
         }
     }
@@ -562,7 +562,7 @@ class MusicPlayerApp {
                     });
                 }
 
-                this.managers.ui?.showToast(\`Loaded \${result.playlist.length} tracks\`, 'success');
+                this.managers.ui?.showToast(`Loaded ${result.playlist.length} tracks`, 'success');
                 this.startBackgroundAnalysis();
 
                 // ✅ FIX #5: Auto-play
@@ -572,7 +572,7 @@ class MusicPlayerApp {
             }
         } catch (error) {
             if (error.name !== 'AbortError') {
-                this.debugLog(\`Error: \${error.message}\`, 'error');
+                this.debugLog(`Error: ${error.message}`, 'error');
             }
         }
     }
@@ -583,7 +583,7 @@ class MusicPlayerApp {
         this.state.currentTrackIndex = index;
         const track = this.state.playlist[index];
 
-        this.debugLog(\`Loading track \${index + 1}: \${track.fileName}\`, 'info');
+        this.debugLog(`Loading track ${index + 1}: ${track.fileName}`, 'info');
 
         if (track.metadata) {
             this.displayMetadata(track.metadata);
@@ -593,7 +593,7 @@ class MusicPlayerApp {
         }
 
         if (this.managers.volume && track.metadata) {
-            const trackId = \`\${track.metadata.artist || 'Unknown'}_\${track.metadata.title || track.fileName}\`;
+            const trackId = `${track.metadata.artist || 'Unknown'}_${track.metadata.title || track.fileName}`;
             const hasAppliedSaved = this.managers.volume.applyTrackVolume(trackId);
             if (!hasAppliedSaved && track.analysis) {
                 this.managers.volume.applyVolume(this.managers.volume.getVolume(), true, track.analysis);
@@ -633,7 +633,7 @@ class MusicPlayerApp {
 
                 // ✅ FIX #5: Auto-play
                 this.elements.player.play().catch(e => 
-                    this.debugLog(\`Playback failed: \${e.message}\`, 'warning')
+                    this.debugLog(`Playback failed: ${e.message}`, 'warning')
                 );
                 
                 this.managers.audioBuffer.preloadUpcoming(loadTrackIndex);
@@ -643,7 +643,7 @@ class MusicPlayerApp {
                 
                 // ✅ FIX #5: Auto-play fallback
                 this.elements.player.play().catch(e => 
-                    this.debugLog(\`Playback failed: \${e.message}\`, 'warning')
+                    this.debugLog(`Playback failed: ${e.message}`, 'warning')
                 );
             });
         } else {
@@ -652,7 +652,7 @@ class MusicPlayerApp {
             
             // ✅ FIX #5: Auto-play
             this.elements.player.play().catch(e => 
-                this.debugLog(\`Playback failed: \${e.message}\`, 'warning')
+                this.debugLog(`Playback failed: ${e.message}`, 'warning')
             );
         }
 
@@ -727,7 +727,7 @@ class MusicPlayerApp {
         const count = this.state.playlist.length;
         if (this.elements.playlistStatus) {
             this.elements.playlistStatus.textContent = 
-                \`\${count} track\${count !== 1 ? 's' : ''} loaded\`;
+                `${count} track${count !== 1 ? 's' : ''} loaded`;
         }
 
         if (this.elements.clearButton) this.elements.clearButton.disabled = count === 0;
@@ -758,7 +758,7 @@ class MusicPlayerApp {
 
         if (this.state.currentTrackIndex !== -1 && this.managers.volume) {
             const track = this.state.playlist[this.state.currentTrackIndex];
-            const trackId = \`\${track.metadata?.artist || 'Unknown'}_\${track.metadata?.title || track.fileName}\`;
+            const trackId = `${track.metadata?.artist || 'Unknown'}_${track.metadata?.title || track.fileName}`;
             this.managers.volume.rememberTrackVolume(trackId, this.managers.volume.getVolume());
         }
 
@@ -803,7 +803,7 @@ class MusicPlayerApp {
         if (this.elements.shuffleButton) {
             this.elements.shuffleButton.classList.toggle('active', this.state.isShuffled);
         }
-        this.managers.ui?.showToast(\`Shuffle \${this.state.isShuffled ? 'on' : 'off'}\`, 'info');
+        this.managers.ui?.showToast(`Shuffle ${this.state.isShuffled ? 'on' : 'off'}`, 'info');
     }
 
     cycleLoopMode() {
@@ -815,7 +815,7 @@ class MusicPlayerApp {
             this.elements.loopButton.classList.toggle('active', this.state.loopMode !== 'off');
         }
 
-        this.managers.ui?.showToast(\`Loop: \${this.state.loopMode}\`, 'info');
+        this.managers.ui?.showToast(`Loop: ${this.state.loopMode}`, 'info');
     }
 
     clearPlaylist() {
@@ -847,7 +847,7 @@ class MusicPlayerApp {
 
         if (this.managers.performance?.shouldUpdate('progress') !== false) {
             const percent = (this.elements.player.currentTime / this.elements.player.duration) * 100;
-            this.elements.progressBar.style.width = \`\${percent}%\`;
+            this.elements.progressBar.style.width = `${percent}%`;
             this.elements.currentTimeDisplay.textContent = this.formatTime(this.elements.player.currentTime);
         }
 
@@ -1035,19 +1035,19 @@ class MusicPlayerApp {
         if (isNaN(seconds) || !isFinite(seconds)) return '0:00';
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
-        return \`\${mins}:\${secs.toString().padStart(2, '0')}\`;
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
 
     debugLog(message, type = 'info') {
         if (!this.state.debugMode && type !== 'error') return;
 
         const prefix = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' }[type] || 'ℹ️';
-        console.log(\`\${prefix} \${message}\`);
+        console.log(`${prefix} ${message}`);
 
         if (this.elements.debugPanel && this.state.debugMode) {
             const entry = document.createElement('div');
-            entry.className = \`debug-entry debug-\${type}\`;
-            entry.textContent = \`\${new Date().toLocaleTimeString()} - \${message}\`;
+            entry.className = `debug-entry debug-${type}`;
+            entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
             this.elements.debugPanel.appendChild(entry);
 
             while (this.elements.debugPanel.children.length > 100) {
