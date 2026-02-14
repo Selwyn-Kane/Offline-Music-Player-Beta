@@ -204,9 +204,34 @@ class MusicPlayerApp {
             }
 
             if (typeof AudioBufferManager !== 'undefined') {
-                this.managers.audioBuffer = new AudioBufferManager(debugLog);
-                this.managers.audioBuffer.setPlaylist(this.state.playlist);
+    this.managers.audioBuffer = new AudioBufferManager(debugLog);
+    this.managers.audioBuffer.setPlaylist(this.state.playlist);
+
+    // Wire up progress callbacks to fix the "missing progress updates" bug
+    this.managers.audioBuffer.setCallbacks({
+        onLoadStart: (trackIndex, fileName) => {
+            if (this.elements.playlistStatus) {
+                this.elements.playlistStatus.textContent = `Loading: ${fileName}`;
             }
+        },
+        onLoadProgress: (trackIndex, fileName, loaded, total) => {
+            if (this.elements.playlistStatus) {
+                const pct = Math.round((loaded / total) * 100);
+                this.elements.playlistStatus.textContent = `Loading: ${fileName} (${pct}%)`;
+            }
+        },
+        onLoadComplete: (trackIndex, fileName) => {
+            // Status will be reset by updatePlaylistStatus() after the track loads
+        },
+        onLoadError: (trackIndex, fileName, error) => {
+            this.debugLog(`❌ Buffer load failed: ${fileName} — ${error.message}`, 'error');
+            this.managers.ui?.showToast(`Failed to load: ${fileName}`, 'error');
+        },
+        onMemoryWarning: (usagePct) => {
+            this.debugLog(`⚠️ Buffer memory at ${usagePct.toFixed(1)}%`, 'warning');
+        }
+    });
+}
 
             if (typeof MetadataParser !== 'undefined') {
                 this.managers.metadata = new MetadataParser(debugLog);
@@ -1698,12 +1723,18 @@ class MusicPlayerApp {
     }
 
     toggleShuffle() {
-        this.state.isShuffled = !this.state.isShuffled;
-        if (this.elements.shuffleButton) {
-            this.elements.shuffleButton.classList.toggle('active', this.state.isShuffled);
-        }
-        this.managers.ui?.showToast(`Shuffle ${this.state.isShuffled ? 'on' : 'off'}`, 'info');
+    this.state.isShuffled = !this.state.isShuffled;
+    if (this.elements.shuffleButton) {
+        this.elements.shuffleButton.classList.toggle('active', this.state.isShuffled);
     }
+
+    // Keep buffer manager aware so it skips pointless sequential preloads
+    if (this.managers.audioBuffer) {
+        this.managers.audioBuffer.setShuffleState(this.state.isShuffled);
+    }
+
+    this.managers.ui?.showToast(`Shuffle ${this.state.isShuffled ? 'on' : 'off'}`, 'info');
+}
 
     cycleLoopMode() {
         const modes = ['off', 'all', 'one'];
@@ -1916,6 +1947,10 @@ class MusicPlayerApp {
             if (savedAutoEQ && this.managers.autoEQ) {
                 this.managers.autoEQ.setEnabled(true);
             }
+           // Restore shuffle state in buffer manager
+if (this.managers.audioBuffer) {
+    this.managers.audioBuffer.setShuffleState(this.state.isShuffled);
+}
         } catch (error) {
             // Silent fail
         }
