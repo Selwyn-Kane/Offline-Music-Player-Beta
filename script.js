@@ -562,6 +562,8 @@ class MusicPlayerApp {
         this.setupStorageStatsButton();
         this.setupCustomBackgroundButton();
         this.setupClearCacheButton();
+        this.setupDeepAnalysisButton();
+        this.setupLyricsFetcherButton();
         this.debugLog('✅ Sidebar buttons configured', 'success');
     }
 
@@ -789,6 +791,28 @@ class MusicPlayerApp {
         this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
+           setupDeepAnalysisButton() {
+    const btn = document.getElementById('deep-analysis-btn');
+    if (!btn) return;
+    
+    const handler = () => {
+        window.open('deep-music-analysis.html', '_blank', 'width=1200,height=800');
+    };
+    btn.addEventListener('click', handler);
+    this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+}
+
+setupLyricsFetcherButton() {
+    const btn = document.getElementById('auto-lyrics-btn');
+    if (!btn) return;
+    
+    const handler = () => {
+        window.open('lyrics-fetcher.html', '_blank', 'width=1000,height=700');
+    };
+    btn.addEventListener('click', handler);
+    this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+}
+
     // ── Keyboard shortcuts ────────────────────────────────────────────────────
 
     setupKeyboardShortcuts() {
@@ -800,12 +824,22 @@ class MusicPlayerApp {
                     e.preventDefault(); this.togglePlayPause(); break;
 
                 case 'arrowright':
-                    e.preventDefault();
-                    e.shiftKey ? this.playNext() : this.seekForward(); break;
+    e.preventDefault();
+    if (e.shiftKey) {
+        this.seekForward();
+    } else {
+        this.playNext();
+    }
+    break;
 
-                case 'arrowleft':
-                    e.preventDefault();
-                    e.shiftKey ? this.playPrevious() : this.seekBackward(); break;
+case 'arrowleft':
+    e.preventDefault();
+    if (e.shiftKey) {
+        this.seekBackward();
+    } else {
+        this.playPrevious();
+    }
+    break;
 
                 case 'arrowup':
                     e.preventDefault(); this.managers.volume?.increaseVolume(0.1); break;
