@@ -884,71 +884,25 @@ video {
 }
 
         /* ========== COMPACT MODE CSS ========== */
-.compact-hidden {
-    max-height: 0 !important;
-    min-height: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    opacity: 0;
-    transition: all 0.3s ease, opacity 0.2s ease;
-}
 
-.compact-mode #player-wrapper,
-.compact-mode #equalizer-control,
-.compact-mode #lyrics-display {
-    animation: slideUp 0.3s ease forwards;
-}
-
-.mini-mode #metadata-container {
+/* Mini mode — metadata window only; everything else hidden by JS */
+#main-content.mode-mini #metadata-container {
     padding: 10px 15px;
     gap: 15px;
 }
 
-.mini-mode #cover-art-container {
+#main-content.mode-mini #cover-art-container {
     width: 80px;
     height: 80px;
     min-width: 80px;
 }
 
-.mini-mode #info-details .value {
+#main-content.mode-mini #info-details .value {
     font-size: 0.95em;
 }
 
-.mini-mode #info-details .label {
+#main-content.mode-mini #info-details .label {
     font-size: 0.65em;
-}
-
-.mini-mode #playlist-container,
-.mini-mode #volume-control,
-.mini-mode #custom-progress-container,
-.mini-mode #time-display {
-    animation: slideUp 0.3s ease forwards;
-}
-
-@keyframes slideUp {
-    from {
-        max-height: 500px;
-        opacity: 1;
-    }
-    to {
-        max-height: 0;
-        margin: 0;
-        padding: 0;
-        opacity: 0;
-        overflow: hidden;
-    }
-}
-
-/* Compact mode button states */
-#compact-toggle.compact {
-    background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
-    box-shadow: 0 4px 15px rgba(255, 193, 7, 0.4);
-}
-
-#compact-toggle.mini {
-    background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
-    box-shadow: 0 4px 15px rgba(23, 162, 184, 0.4);
 }
 /* ========== END COMPACT MODE CSS ========== */
         
