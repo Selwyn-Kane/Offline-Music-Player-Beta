@@ -2020,7 +2020,7 @@ body h1 {
 @media (max-width: 768px) {
     #sidebar {
         position: fixed;
-        left: -280px; /* Start off-screen */
+        left: -280px;
         top: 0;
         height: 100vh;
         width: 280px !important;
@@ -2032,35 +2032,26 @@ body h1 {
     }
     
     #sidebar:not(.collapsed) {
-        left: 0; /* Slide in */
+        left: 0;
         box-shadow: 5px 0 20px rgba(0, 0, 0, 0.8);
+    }
+    
+    .sidebar-toggle {
+        position: fixed !important;
+        left: 10px !important;
+        top: 10px !important;
+        width: 50px !important;
+        height: 50px !important;
+        z-index: 9001 !important;
+        background: rgba(26, 26, 26, 0.95) !important;
+        border-radius: 50% !important;
+        border: 2px solid #dc3545 !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5) !important;
     }
     
     #main-content {
         margin-left: 0 !important;
         width: 100% !important;
-    }
-    
-    #sidebar-toggle {
-        position: fixed;
-        left: 10px;
-        top: 10px;
-        width: 50px;
-        height: 50px;
-        z-index: 9001;
-        background: rgba(26, 26, 26, 0.9);
-        border-radius: 50%;
-        border: 2px solid #dc3545;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-    
-    #sidebar-toggle:hover {
-        background: rgba(220, 53, 69, 0.2);
-        transform: scale(1.1);
     }
     
     #sidebar .sidebar-label {
@@ -2075,36 +2066,6 @@ body h1 {
     .sidebar-btn {
         padding: 15px 20px !important;
         justify-content: flex-start !important;
-    }
-    
-    .sidebar-icon {
-        font-size: 20px;
-    }
-    
-    #playback-controls {
-        gap: 10px;
-    }
-    
-    .control-btn {
-        width: 48px;
-        height: 48px;
-        min-width: 48px;
-        min-height: 48px;
-    }
-    
-    .control-btn-play {
-        width: 60px;
-        height: 60px;
-        min-width: 60px;
-        min-height: 60px;
-    }
-    
-    .control-icon {
-        font-size: 20px;
-    }
-    
-    .control-btn-play .control-icon {
-        font-size: 26px;
     }
 }
 /* ========== END SIDEBAR STYLES ========== */
