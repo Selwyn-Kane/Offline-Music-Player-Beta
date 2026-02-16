@@ -108,12 +108,13 @@ class CustomBackgroundManager {
             const reader = new FileReader();
             
             reader.onload = (e) => {
-                const dataURL = e.target.result;
-                this.applyBackground(dataURL);
-                this.saveBackground(dataURL);
-                this.showPreview(dataURL);
-                this.debugLog('Custom background loaded from file', 'success');
-            };
+    const dataURL = e.target.result;
+    this.applyBackground(dataURL);
+    this.saveBackground(dataURL);
+    this.showPreview(dataURL);
+    this.debugLog('Custom background loaded from file', 'success');
+    this.hideModal();
+};
             
             reader.readAsDataURL(file);
         } catch (err) {
@@ -126,12 +127,13 @@ class CustomBackgroundManager {
             // Test if image loads
             const img = new Image();
             
-            img.onload = () => {
-                this.applyBackground(url);
-                this.saveBackground(url);
-                this.showPreview(url);
-                this.debugLog('Custom background loaded from URL', 'success');
-            };
+           img.onload = () => {
+    this.applyBackground(url);
+    this.saveBackground(url);
+    this.showPreview(url);
+    this.debugLog('Custom background loaded from URL', 'success');
+    this.hideModal();
+};
             
             img.onerror = () => {
                 alert('Failed to load image from URL. Please check the URL and try again.');
