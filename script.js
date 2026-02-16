@@ -1,43 +1,27 @@
 /* ============================================
-   Ultimate Local Music Player - Clean v3.0
-
-   CHANGES FROM v2.0:
-   - Visualizer completely removed (VisualizerManager, VisualizerUIController,
-     canvas, PiP toggle, getAudioDataForVisualizer, sharedAnalyser/sharedDataArray)
-   - Audio chain reconnect helper updated: volumeMakeupGain → destination (no analyser node)
-   - Progress bar seek timeout properly removed from resources.timeouts on cancel/fire
-   - Background analysis guarded against destroyed/cleared state mid-loop
-   - handleTimeUpdate guards against NaN/Infinity duration before writing to DOM
-   - Color cache reference kept but unused growth prevented via clearCache path
-   - destroy() now also nullifies this.managers and this.elements to release object graph
-   - All other memory-leak protections from v2.0 retained
+   Ultimate Local Music Player — Clean v4.0
    ============================================ */
 
-// ─── Audio Chain Reconnection Helper ────────────────────────────────────────
+// ─── Audio Chain Reconnection Helper ─────────────────────────────────────────
 // Chain: source → bass → mid → treble → volumeGain → compressor → makeupGain → destination
 window.reconnectAudioChainWithVolumeControl = function () {
     try {
         if (
-            !window.sharedAudioSource ||
-            !window.sharedBassFilter  ||
-            !window.sharedMidFilter   ||
-            !window.sharedTrebleFilter||
+            !window.sharedAudioSource  ||
+            !window.sharedBassFilter   ||
+            !window.sharedMidFilter    ||
+            !window.sharedTrebleFilter ||
             !window.audioContext
         ) {
             console.log('⏳ Audio pipeline not ready for reconnection');
             return false;
         }
-
-        if (
-            !window.volumeGainNode   ||
-            !window.volumeCompressor ||
-            !window.volumeMakeupGain
-        ) {
+        if (!window.volumeGainNode || !window.volumeCompressor || !window.volumeMakeupGain) {
             console.log('⏳ Volume control nodes not ready');
             return false;
         }
 
-        console.log('🔗 Reconnecting audio chain...');
+        console.log('🔗 Reconnecting audio chain…');
 
         [
             window.sharedAudioSource,
@@ -47,7 +31,7 @@ window.reconnectAudioChainWithVolumeControl = function () {
             window.volumeGainNode,
             window.volumeCompressor,
             window.volumeMakeupGain,
-        ].forEach(node => { try { node.disconnect(); } catch (_) {} });
+        ].forEach(n => { try { n.disconnect(); } catch (_) {} });
 
         window.sharedAudioSource.connect(window.sharedBassFilter);
         window.sharedBassFilter.connect(window.sharedMidFilter);
@@ -59,56 +43,64 @@ window.reconnectAudioChainWithVolumeControl = function () {
 
         console.log('✅ Audio chain reconnected');
         return true;
-    } catch (error) {
-        console.error('❌ Audio chain reconnection failed:', error);
+    } catch (err) {
+        console.error('❌ Audio chain reconnection failed:', err);
         return false;
     }
 };
 
 // ─── MusicPlayerApp ──────────────────────────────────────────────────────────
 class MusicPlayerApp {
+
     constructor() {
         this.state = {
-            playlist: [],
-            currentTrackIndex: -1,
-            isShuffled: false,
-            loopMode: 'off',
-            debugMode: false,
-            isSeekingProg: false,
-            compactMode: 'full',
-            folderHandle: null,
+            playlist:                  [],
+            currentTrackIndex:         -1,
+            isShuffled:                false,
+            loopMode:                  'off',
+            debugMode:                 false,
+            isSeekingProg:             false,
+            compactMode:               'full',
+            folderHandle:              null,
             backgroundAnalysisRunning: false,
-            stickyMode: false,
-            initialized: false,
-            destroyed: false,
+            stickyMode:                false,
+            initialized:               false,
+            destroyed:                 false,
         };
 
         this.config = {
             SEEK_DEBOUNCE_DELAY_MS: 100,
         };
 
-        this.managers = {};
-        this.elements = {};
-
+        this.managers  = {};
+        this.elements  = {};
         this.colorCache = new Map();
         window.colorCache = this.colorCache;
 
         this.resources = {
-            blobURLs: new Set(),
-            eventListeners: [],   // { element, event, handler }
-            intervals: new Set(),
-            timeouts: new Set(),
+            blobURLs:       new Set(),
+            eventListeners: [],           // { element, event, handler }
+            intervals:      new Set(),
+            timeouts:       new Set(),
         };
+
+        // rAF state — drives progress bar + lyrics while playing
+        this._raf = {
+            id:           null,
+            lastProgress: 0,
+            lastLyrics:   0,
+            lastPercent:  -1,
+        };
+        this._boundRafTick = this._rafTick.bind(this);
     }
 
-    // ── Initialisation ────────────────────────────────────────────────────────
+    // ── Bootstrap ─────────────────────────────────────────────────────────────
 
     async init() {
         if (this.state.initialized) {
-            this.debugLog('⚠️ App already initialized', 'warning');
+            this.debugLog('⚠️ Already initialized', 'warning');
             return;
         }
-
         try {
             this.cacheElements();
             await this.initializeManagers();
@@ -118,152 +110,242 @@ class MusicPlayerApp {
             this.setupSidebarButtons();
             await this.restoreState();
             this.connectManagersToPerformance();
-
             this.state.initialized = true;
-            this.debugLog('✅ Music player initialized (Clean v3.0)', 'success');
-        } catch (error) {
-            this.debugLog(`❌ Initialization error: ${error.message}`, 'error');
-            console.error(error);
+            this.debugLog('✅ Music player initialized (Clean v4.0)', 'success');
+        } catch (err) {
+            this.debugLog(`❌ Init error: ${err.message}`, 'error');
+            console.error(err);
         }
     }
 
+    // ── Element cache ─────────────────────────────────────────────────────────
+
     cacheElements() {
+        const $ = id => document.getElementById(id);
+
         this.elements = {
-            player:                     document.getElementById('audio-player'),
-            playPauseButton:            document.getElementById('play-pause-button'),
-            loadButton:                 document.getElementById('load-button'),
-            folderButton:               document.getElementById('folder-button'),
-            prevButton:                 document.getElementById('prev-button'),
-            nextButton:                 document.getElementById('next-button'),
-            shuffleButton:              document.getElementById('shuffle-button'),
-            loopButton:                 document.getElementById('loop-button'),
-            clearButton:                document.getElementById('clear-playlist'),
-            playlistStatus:             document.getElementById('playlist-status'),
-            playlistItems:              document.getElementById('playlist-items'),
-            playlistSearch:             document.getElementById('playlist-search'),
-            jumpToCurrentBtn:           document.getElementById('jump-to-current'),
-            coverArt:                   document.getElementById('cover-art'),
-            coverPlaceholder:           document.getElementById('cover-placeholder'),
-            trackTitle:                 document.getElementById('track-title'),
-            trackArtist:                document.getElementById('track-artist'),
-            trackAlbum:                 document.getElementById('track-album'),
-            progressContainer:          document.getElementById('custom-progress-container'),
-            progressBar:                document.getElementById('progress-bar'),
-            currentTimeDisplay:         document.getElementById('current-time'),
-            durationDisplay:            document.getElementById('duration'),
-            lyricsDisplay:              document.getElementById('lyrics-display'),
-            eqBassSlider:               document.getElementById('eq-bass'),
-            eqMidSlider:                document.getElementById('eq-mid'),
-            eqTrebleSlider:             document.getElementById('eq-treble'),
-            bassValue:                  document.getElementById('bass-value'),
-            midValue:                   document.getElementById('mid-value'),
-            trebleValue:                document.getElementById('treble-value'),
-            eqResetBtn:                 document.getElementById('eq-reset'),
-            debugToggle:                document.getElementById('debug-toggle'),
-            debugPanel:                 document.getElementById('debug-panel'),
-            dropZone:                   document.getElementById('drop-zone'),
-            exportLyricsButton:         document.getElementById('export-lyrics-button'),
-            fullscreenLyricsContainer:  document.getElementById('fullscreen-lyrics'),
-            fullscreenLyricsContent:    document.getElementById('fullscreen-lyrics-content'),
-            fullscreenLyricsToggle:     document.getElementById('fullscreen-lyrics-toggle'),
-            fullscreenLyricsCloseBtn:   document.getElementById('lyrics-close-btn'),
-            fullscreenLyricsPrevBtn:    document.getElementById('lyrics-prev-btn'),
-            fullscreenLyricsNextBtn:    document.getElementById('lyrics-next-btn'),
-            metadataContainer:          document.getElementById('metadata-container'),
-            mainContent:                document.getElementById('main-content'),
+            // Core player
+            player:           $('audio-player'),
+            playPauseButton:  $('play-pause-button'),
+            loadButton:       $('load-button'),
+            folderButton:     $('folder-button'),
+            prevButton:       $('prev-button'),
+            nextButton:       $('next-button'),
+            shuffleButton:    $('shuffle-button'),
+            loopButton:       $('loop-button'),
+            clearButton:      $('clear-playlist'),
+
+            // Playlist
+            playlistStatus:   $('playlist-status'),
+            playlistItems:    $('playlist-items'),
+            playlistSearch:   $('playlist-search'),
+            jumpToCurrentBtn: $('jump-to-current'),
+
+            // Now-playing metadata
+            coverArt:         $('cover-art'),
+            coverPlaceholder: $('cover-placeholder'),
+            trackTitle:       $('track-title'),
+            trackArtist:      $('track-artist'),
+            trackAlbum:       $('track-album'),
+
+            // Progress
+            progressContainer:    $('custom-progress-container'),
+            progressBar:          $('progress-bar'),
+            currentTimeDisplay:   $('current-time'),
+            durationDisplay:      $('duration'),
+
+            // Lyrics
+            lyricsDisplay:              $('lyrics-display'),
+            exportLyricsButton:         $('export-lyrics-button'),
+            fullscreenLyricsContainer:  $('fullscreen-lyrics'),
+            fullscreenLyricsContent:    $('fullscreen-lyrics-content'),
+            fullscreenLyricsToggle:     $('fullscreen-lyrics-toggle'),
+            fullscreenLyricsCloseBtn:   $('lyrics-close-btn'),
+            fullscreenLyricsPrevBtn:    $('lyrics-prev-btn'),
+            fullscreenLyricsNextBtn:    $('lyrics-next-btn'),
+
+            // EQ
+            eqBassSlider:   $('eq-bass'),
+            eqMidSlider:    $('eq-mid'),
+            eqTrebleSlider: $('eq-treble'),
+            bassValue:      $('bass-value'),
+            midValue:       $('mid-value'),
+            trebleValue:    $('treble-value'),
+            eqResetBtn:     $('eq-reset'),
+
+            // Misc
+            debugToggle:       $('debug-toggle'),
+            debugPanel:        $('debug-panel'),
+            dropZone:          $('drop-zone'),
+            metadataContainer: $('metadata-container'),
+            mainContent:       $('main-content'),
+
+            // ── Sections controlled by view-mode ─────────────────────────────
+            // compact + full
+            sectionPlaylist:   $('playlist-container'),
+            sectionVolume:     $('volume-container'),
+            // full only
+            sectionLyrics:     $('lyrics-container'),
+            sectionEQ:         $('eq-container'),
+            sectionDropZone:   $('drop-zone'),          // alias for clarity
         };
+    }
+
+    // ── View mode ─────────────────────────────────────────────────────────────
+
+    /**
+     * Apply a view mode, showing/hiding sections accordingly.
+     *
+     *  mini    → metadata window only
+     *  compact → mini + playlist + volume
+     *  full    → everything
+     */
+    applyViewMode(mode) {
+        if (!this.elements.mainContent) return;
+
+        const compact = (mode === 'compact' || mode === 'full');
+        const full    =  mode === 'full';
+
+        // Compact-and-above sections
+        this._setVisible(this.elements.sectionPlaylist, compact);
+        this._setVisible(this.elements.sectionVolume,   compact);
+
+        // Full-only sections
+        this._setVisible(this.elements.sectionLyrics,   full);
+        this._setVisible(this.elements.sectionEQ,       full);
+        this._setVisible(this.elements.dropZone,        full);
+
+        // CSS class hook for any supplementary stylesheet rules
+        this.elements.mainContent.classList.remove('mode-full', 'mode-compact', 'mode-mini');
+        this.elements.mainContent.classList.add(`mode-${mode}`);
+
+        this.managers.performance?.setMode(mode);
+        this.debugLog(`View mode → ${mode}`, 'info');
+    }
+
+    /** Null-safe show/hide helper. '' restores the element's natural display. */
+    _setVisible(el, visible) {
+        if (el) el.style.display = visible ? '' : 'none';
+    }
+
+    // ── rAF loop (progress bar + lyrics sync) ────────────────────────────────
+
+    _rafStart() {
+        if (this._raf.id !== null) return;
+        this._raf.id = requestAnimationFrame(this._boundRafTick);
+    }
+
+    _rafStop() {
+        if (this._raf.id !== null) {
+            cancelAnimationFrame(this._raf.id);
+            this._raf.id = null;
+        }
+    }
+
+    _rafTick(ts) {
+        // Hard stop conditions
+        if (this.state.destroyed || !this.elements.player || this.elements.player.paused) {
+            this._raf.id = null;
+            return;
+        }
+
+        // ── Progress bar (capped at ~15 fps, skip tiny changes) ───────────────
+        if (ts - this._raf.lastProgress >= 67) {
+            this._raf.lastProgress = ts;
+            this._renderProgress();
+        }
+
+        // ── Lyrics (capped at ~10 fps, only when lyrics section is visible) ───
+        if (
+            this.managers.lyrics &&
+            this.state.compactMode === 'full' &&
+            ts - this._raf.lastLyrics >= 100
+        ) {
+            this._raf.lastLyrics = ts;
+            this.managers.lyrics.update(this.elements.player.currentTime, 'full');
+        }
+
+        this._raf.id = requestAnimationFrame(this._boundRafTick);
+    }
+
+    /** Write progress to DOM only when the value has changed meaningfully. */
+    _renderProgress() {
+        const dur = this.elements.player.duration;
+        if (!isFinite(dur) || dur <= 0) return;
+
+        const ct  = this.elements.player.currentTime;
+        const pct = (ct / dur) * 100;
+
+        if (Math.abs(pct - this._raf.lastPercent) < 0.05) return;
+        this._raf.lastPercent = pct;
+
+        this.elements.progressBar.style.width        = `${pct}%`;
+        this.elements.currentTimeDisplay.textContent  = this.formatTime(ct);
     }
 
     // ── Manager initialisation ────────────────────────────────────────────────
 
     async initializeManagers() {
-        const debugLog = this.debugLog.bind(this);
+        const log = this.debugLog.bind(this);
 
         try {
             if (typeof createMusicPlayerWorkerManager !== 'undefined') {
-                this.managers.worker = createMusicPlayerWorkerManager(debugLog);
+                this.managers.worker = createMusicPlayerWorkerManager(log);
                 window.workerManager = this.managers.worker;
             }
 
             if (typeof UIManager !== 'undefined') {
-                this.managers.ui = new UIManager(debugLog);
+                this.managers.ui = new UIManager(log);
                 window.uiManager = this.managers.ui;
             }
 
             if (typeof PerformanceManager !== 'undefined') {
-                this.managers.performance = new PerformanceManager(debugLog);
+                this.managers.performance = new PerformanceManager(log);
                 window.perfManager = this.managers.performance;
             }
 
             if (typeof ImageOptimizer !== 'undefined') {
-                this.managers.imageOptimizer = new ImageOptimizer(debugLog);
+                this.managers.imageOptimizer = new ImageOptimizer(log);
             }
 
             if (typeof AudioBufferManager !== 'undefined') {
-                this.managers.audioBuffer = new AudioBufferManager(debugLog);
+                this.managers.audioBuffer = new AudioBufferManager(log);
                 this.managers.audioBuffer.setPlaylist(this.state.playlist);
 
                 this.managers.audioBuffer.setCallbacks({
-                    onLoadStart: (_idx, fileName) => {
-                        if (this.elements.playlistStatus) {
-                            this.elements.playlistStatus.textContent = `Loading: ${fileName}`;
-                        }
+                    onLoadStart: (_i, name) => {
+                        if (this.elements.playlistStatus)
+                            this.elements.playlistStatus.textContent = `Loading: ${name}`;
                     },
-                    onLoadProgress: (_idx, fileName, loaded, total) => {
+                    onLoadProgress: (_i, name, loaded, total) => {
                         if (this.elements.playlistStatus) {
                             const pct = Math.round((loaded / total) * 100);
                             this.elements.playlistStatus.textContent =
-                                `Loading: ${fileName} (${pct}%)`;
+                                `Loading: ${name} (${pct}%)`;
                         }
                     },
-                    onLoadComplete: () => {
-                        // Status reset by updatePlaylistStatus() after track loads.
+                    onLoadComplete: () => { /* reset by updatePlaylistStatus() */ },
+                    onLoadError: (_i, name, err) => {
+                        this.debugLog(`❌ Buffer load failed: ${name} — ${err.message}`, 'error');
+                        this.managers.ui?.showToast(`Failed to load: ${name}`, 'error');
                     },
-                    onLoadError: (_idx, fileName, error) => {
-                        this.debugLog(`❌ Buffer load failed: ${fileName} — ${error.message}`, 'error');
-                        this.managers.ui?.showToast(`Failed to load: ${fileName}`, 'error');
-                    },
-                    onMemoryWarning: (usagePct) => {
-                        this.debugLog(`⚠️ Buffer memory at ${usagePct.toFixed(1)}%`, 'warning');
+                    onMemoryWarning: pct => {
+                        this.debugLog(`⚠️ Buffer memory at ${pct.toFixed(1)}%`, 'warning');
                     },
                 });
             }
 
-            if (typeof MetadataParser !== 'undefined') {
-                this.managers.metadata = new MetadataParser(debugLog);
-            }
-
-            if (typeof VTTParser !== 'undefined') {
-                this.managers.vtt = new VTTParser(debugLog);
-            }
-
-            if (typeof ErrorRecovery !== 'undefined') {
-                this.managers.errorRecovery = new ErrorRecovery(debugLog);
-            }
-
-            if (typeof AnalysisTextParser !== 'undefined') {
-                this.managers.analysisParser = new AnalysisTextParser(debugLog);
-            }
-
-            if (typeof MetadataEditor !== 'undefined') {
-                this.managers.metadataEditor = new MetadataEditor(debugLog);
-            }
-
-            if (typeof MusicAnalyzer !== 'undefined') {
-                this.managers.analyzer = new MusicAnalyzer(debugLog);
-            }
-
-            if (typeof CustomMetadataStore !== 'undefined') {
-                this.managers.customMetadata = new CustomMetadataStore();
-            }
-
-            if (typeof FolderPersistence !== 'undefined') {
-                this.managers.folderPersistence = new FolderPersistence();
-            }
+            if (typeof MetadataParser    !== 'undefined') this.managers.metadata      = new MetadataParser(log);
+            if (typeof VTTParser         !== 'undefined') this.managers.vtt           = new VTTParser(log);
+            if (typeof ErrorRecovery     !== 'undefined') this.managers.errorRecovery = new ErrorRecovery(log);
+            if (typeof AnalysisTextParser!== 'undefined') this.managers.analysisParser= new AnalysisTextParser(log);
+            if (typeof MetadataEditor    !== 'undefined') this.managers.metadataEditor= new MetadataEditor(log);
+            if (typeof MusicAnalyzer     !== 'undefined') this.managers.analyzer      = new MusicAnalyzer(log);
+            if (typeof CustomMetadataStore!=='undefined') this.managers.customMetadata= new CustomMetadataStore();
+            if (typeof FolderPersistence !== 'undefined') this.managers.folderPersistence = new FolderPersistence();
 
             if (typeof EnhancedFileLoadingManager !== 'undefined') {
-                this.managers.fileLoading = new EnhancedFileLoadingManager(debugLog);
-
+                this.managers.fileLoading = new EnhancedFileLoadingManager(log);
                 this.managers.fileLoading.init({
                     metadataParser:      this.managers.metadata,
                     vttParser:           this.managers.vtt,
@@ -273,14 +355,12 @@ class MusicPlayerApp {
                     workerManager:       this.managers.worker,
                     imageOptimizer:      this.managers.imageOptimizer,
                 });
-
                 window.fileLoadingManager = this.managers.fileLoading;
                 this.debugLog('✅ FileLoadingManager initialized', 'success');
             }
 
             if (typeof EnhancedPlaylistRenderer !== 'undefined') {
-                this.managers.playlistRenderer = new EnhancedPlaylistRenderer(debugLog);
-
+                this.managers.playlistRenderer = new EnhancedPlaylistRenderer(log);
                 this.managers.playlistRenderer.init({
                     playlistContainer: document.getElementById('playlist-container'),
                     playlistItems:     this.elements.playlistItems,
@@ -288,19 +368,16 @@ class MusicPlayerApp {
                     clearButton:       this.elements.clearButton,
                     jumpToCurrentBtn:  this.elements.jumpToCurrentBtn,
                 });
-
                 this.managers.playlistRenderer.setCallbacks({
-                    onTrackClick: (index) => this.loadTrack(index),
-                    onEditClick:  (index) => this.editTrackMetadata(index),
+                    onTrackClick: idx => this.loadTrack(idx),
+                    onEditClick:  idx => this.editTrackMetadata(idx),
                 });
-
                 window.playlistRenderer = this.managers.playlistRenderer;
-                this.debugLog('✅ EnhancedPlaylistRenderer initialized', 'success');
+                this.debugLog('✅ PlaylistRenderer initialized', 'success');
             }
 
             if (typeof LyricsManager !== 'undefined') {
-                this.managers.lyrics = new LyricsManager(debugLog);
-
+                this.managers.lyrics = new LyricsManager(log);
                 this.managers.lyrics.init({
                     lyricsDisplay:       this.elements.lyricsDisplay,
                     exportButton:        this.elements.exportLyricsButton,
@@ -312,40 +389,36 @@ class MusicPlayerApp {
                     fullscreenNextBtn:   this.elements.fullscreenLyricsNextBtn,
                 }, this.elements.player);
 
-                this.managers.lyrics.onNavigationRequest = (action) => {
+                this.managers.lyrics.onNavigationRequest = action => {
                     if (action === 'previous') this.playPrevious();
                     else if (action === 'next') this.playNext();
                 };
-
                 this.managers.lyrics.onGetTrackInfo = () => {
                     if (this.state.currentTrackIndex === -1) return {};
-                    const track = this.state.playlist[this.state.currentTrackIndex];
+                    const t = this.state.playlist[this.state.currentTrackIndex];
                     return {
-                        title:  track.metadata?.title  || track.fileName,
-                        artist: track.metadata?.artist || 'Unknown Artist',
+                        title:  t.metadata?.title  || t.fileName,
+                        artist: t.metadata?.artist || 'Unknown Artist',
                     };
                 };
-
                 window.lyricsManager = this.managers.lyrics;
                 this.debugLog('✅ LyricsManager initialized', 'success');
             }
 
             this.debugLog('✅ All managers initialized', 'success');
-        } catch (error) {
-            this.debugLog(`⚠️ Manager init warning: ${error.message}`, 'warning');
+        } catch (err) {
+            this.debugLog(`⚠️ Manager init warning: ${err.message}`, 'warning');
         }
     }
 
     connectManagersToPerformance() {
-        if (!this.managers.performance) {
-            this.debugLog('⚠️ Performance manager not available', 'warning');
-            return;
-        }
+        const pm = this.managers.performance;
+        if (!pm) { this.debugLog('⚠️ No performance manager', 'warning'); return; }
 
-        if (this.managers.audioBuffer)  this.managers.performance.connectManager('audioBuffer',  this.managers.audioBuffer);
-        if (this.managers.lyrics)        this.managers.performance.connectManager('lyrics',        this.managers.lyrics);
-        if (this.managers.audioPipeline) this.managers.performance.connectManager('audioPipeline', this.managers.audioPipeline);
-        if (this.managers.ui)            this.managers.performance.connectManager('ui',            this.managers.ui);
+        if (this.managers.audioBuffer)  pm.connectManager('audioBuffer',  this.managers.audioBuffer);
+        if (this.managers.lyrics)        pm.connectManager('lyrics',        this.managers.lyrics);
+        if (this.managers.audioPipeline) pm.connectManager('audioPipeline', this.managers.audioPipeline);
+        if (this.managers.ui)            pm.connectManager('ui',            this.managers.ui);
 
         this.debugLog('✅ Managers connected to performance manager', 'success');
     }
@@ -367,38 +440,32 @@ class MusicPlayerApp {
 
                 document.dispatchEvent(new CustomEvent('audioContextReady'));
                 this.debugLog('✅ AudioPipeline initialized', 'success');
-
                 this.initializeAudioManagers();
             }
 
             if (typeof VolumeControl !== 'undefined' && this.elements.player) {
                 this.managers.volume = new VolumeControl(
-                    this.elements.player,
-                    this.debugLog.bind(this)
+                    this.elements.player, this.debugLog.bind(this)
                 );
                 window.volumeControl = this.managers.volume;
             }
 
             if (typeof CrossfadeManager !== 'undefined') {
                 this.managers.crossfade = new CrossfadeManager(
-                    this.elements.player,
-                    this.debugLog.bind(this)
+                    this.elements.player, this.debugLog.bind(this)
                 );
             }
 
-            if (window.backgroundAudioHandler) {
-                this.initializeBackgroundAudio();
-            }
+            if (window.backgroundAudioHandler) this.initializeBackgroundAudio();
 
             this.debugLog('✅ Audio system initialized', 'success');
-        } catch (error) {
-            this.debugLog(`⚠️ Audio init: ${error.message}`, 'warning');
+        } catch (err) {
+            this.debugLog(`⚠️ Audio init: ${err.message}`, 'warning');
         }
     }
 
     initializeAudioManagers() {
-        const debugLog = this.debugLog.bind(this);
-
+        const log = this.debugLog.bind(this);
         try {
             if (
                 typeof AudioPresetsManager !== 'undefined' &&
@@ -408,62 +475,58 @@ class MusicPlayerApp {
                     this.managers.audioPipeline.bassFilter,
                     this.managers.audioPipeline.midFilter,
                     this.managers.audioPipeline.trebleFilter,
-                    debugLog
+                    log
                 );
-
                 window.audioPresetsManager = this.managers.audioPresets;
 
                 this.populateEQPresetDropdown();
                 this.setupEQPresetSelector();
                 this.managers.audioPresets.loadSavedPreset();
-
                 this.debugLog('✅ AudioPresetsManager initialized', 'success');
             }
 
             if (typeof AutoEQManager !== 'undefined' && this.managers.audioPresets) {
-                this.managers.autoEQ = new AutoEQManager(this.managers.audioPresets, debugLog);
+                this.managers.autoEQ = new AutoEQManager(this.managers.audioPresets, log);
                 window.autoEQManager = this.managers.autoEQ;
                 this.debugLog('✅ AutoEQManager initialized', 'success');
             }
-        } catch (error) {
-            this.debugLog(`⚠️ Audio manager init: ${error.message}`, 'warning');
-            console.error(error);
+        } catch (err) {
+            this.debugLog(`⚠️ Audio manager init: ${err.message}`, 'warning');
+            console.error(err);
         }
     }
 
     // ── EQ preset helpers ─────────────────────────────────────────────────────
 
     populateEQPresetDropdown() {
-        const dropdown = document.getElementById('eq-preset-select');
-        if (!dropdown || !this.managers.audioPresets) return;
+        const dd = document.getElementById('eq-preset-select');
+        if (!dd || !this.managers.audioPresets) return;
 
         const presets = this.managers.audioPresets.getPresetList();
+        while (dd.options.length > 1) dd.remove(1);
 
-        while (dropdown.options.length > 1) dropdown.remove(1);
-
-        presets.forEach(preset => {
-            const option       = document.createElement('option');
-            option.value       = preset.id;
-            option.textContent = preset.name;
-            option.title       = `${preset.description}\n${preset.philosophy}`;
-            dropdown.appendChild(option);
+        presets.forEach(p => {
+            const opt   = document.createElement('option');
+            opt.value   = p.id;
+            opt.textContent = p.name;
+            opt.title   = `${p.description}\n${p.philosophy}`;
+            dd.appendChild(opt);
         });
 
         this.debugLog(`✅ Populated ${presets.length} EQ presets`, 'info');
     }
 
     setupEQPresetSelector() {
-        const dropdown = document.getElementById('eq-preset-select');
-        if (!dropdown || !this.managers.audioPresets) return;
+        const dd = document.getElementById('eq-preset-select');
+        if (!dd || !this.managers.audioPresets) return;
 
-        const changeHandler = (e) => {
-            const presetId = e.target.value;
-            if (!presetId) return;
+        const handler = e => {
+            const id = e.target.value;
+            if (!id) return;
 
             const track    = this.state.playlist[this.state.currentTrackIndex];
             const analysis = track?.analysis ?? null;
-
-            this.managers.audioPresets.applyPreset(presetId, analysis);
+            this.managers.audioPresets.applyPreset(id, analysis);
             this.managers.audioPresets.saveCurrentPreset();
 
             if (this.managers.autoEQ?.isEnabled()) {
@@ -474,12 +537,11 @@ class MusicPlayerApp {
                     btn.querySelector('.sidebar-label').textContent = 'Auto-EQ Off';
                 }
             }
-
-            this.debugLog(`🎛️ Applied preset: ${presetId}`, 'success');
+            this.debugLog(`🎛️ Applied preset: ${id}`, 'success');
         };
 
-        dropdown.addEventListener('change', changeHandler);
-        this.resources.eventListeners.push({ element: dropdown, event: 'change', handler: changeHandler });
+        dd.addEventListener('change', handler);
+        this.resources.eventListeners.push({ element: dd, event: 'change', handler });
     }
 
     // ── Sidebar buttons ───────────────────────────────────────────────────────
@@ -494,346 +556,264 @@ class MusicPlayerApp {
         this.setupStorageStatsButton();
         this.setupCustomBackgroundButton();
         this.setupClearCacheButton();
-
-        this.debugLog('✅ All sidebar buttons configured', 'success');
+        this.debugLog('✅ Sidebar buttons configured', 'success');
     }
 
     setupAutoEQButton() {
-        const button = document.getElementById('auto-eq-button');
-        if (!button || !this.managers.autoEQ) return;
+        const btn = document.getElementById('auto-eq-button');
+        if (!btn || !this.managers.autoEQ) return;
 
-        const savedState = localStorage.getItem('autoEQEnabled') === 'true';
-        if (savedState) {
+        if (localStorage.getItem('autoEQEnabled') === 'true') {
             this.managers.autoEQ.setEnabled(true);
-            button.classList.add('active');
-            button.querySelector('.sidebar-label').textContent = 'Auto-EQ On';
+            btn.classList.add('active');
+            btn.querySelector('.sidebar-label').textContent = 'Auto-EQ On';
         }
+        btn.disabled = false;
 
-        button.disabled = false;
+        const handler = () => {
+            const on = this.managers.autoEQ.toggle();
+            btn.classList.toggle('active', on);
+            btn.querySelector('.sidebar-label').textContent = on ? 'Auto-EQ On' : 'Auto-EQ Off';
+            localStorage.setItem('autoEQEnabled', on.toString());
 
-        const clickHandler = () => {
-            const newState = this.managers.autoEQ.toggle();
-
-            button.classList.toggle('active', newState);
-            button.querySelector('.sidebar-label').textContent =
-                newState ? 'Auto-EQ On' : 'Auto-EQ Off';
-
-            localStorage.setItem('autoEQEnabled', newState.toString());
-
-            if (newState && this.state.currentTrackIndex !== -1) {
-                const track = this.state.playlist[this.state.currentTrackIndex];
-                if (track) this.managers.autoEQ.applyAutoEQ(track);
-            } else if (!newState) {
+            if (on && this.state.currentTrackIndex !== -1) {
+                const t = this.state.playlist[this.state.currentTrackIndex];
+                if (t) this.managers.autoEQ.applyAutoEQ(t);
+            } else if (!on) {
                 this.managers.audioPresets.reset();
-                const dropdown = document.getElementById('eq-preset-select');
-                if (dropdown) dropdown.value = 'flat';
+                const dd = document.getElementById('eq-preset-select');
+                if (dd) dd.value = 'flat';
             }
-
-            this.managers.ui?.showToast(
-                `Auto-EQ ${newState ? 'enabled' : 'disabled'}`,
-                newState ? 'success' : 'info'
-            );
+            this.managers.ui?.showToast(`Auto-EQ ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
         };
-
-        button.addEventListener('click', clickHandler);
-        this.resources.eventListeners.push({ element: button, event: 'click', handler: clickHandler });
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
     setupVolumeBoostButton() {
-        const button = document.getElementById('volume-boost-button');
-        if (!button || !this.managers.volume) return;
+        const btn = document.getElementById('volume-boost-button');
+        if (!btn || !this.managers.volume) return;
 
         if (this.managers.volume.isBoostEnabled()) {
-            button.classList.add('active');
-            button.querySelector('.sidebar-label').textContent = 'Boost On';
+            btn.classList.add('active');
+            btn.querySelector('.sidebar-label').textContent = 'Boost On';
         }
 
-        const clickHandler = () => {
-            const newState = !this.managers.volume.isBoostEnabled();
-            this.managers.volume.setBoost(newState, 1.5);
-
-            button.classList.toggle('active', newState);
-            button.querySelector('.sidebar-label').textContent =
-                newState ? 'Boost On' : 'Boost Off';
-
-            this.managers.ui?.showToast(
-                `Volume Boost ${newState ? 'enabled' : 'disabled'}`,
-                newState ? 'success' : 'info'
-            );
+        const handler = () => {
+            const on = !this.managers.volume.isBoostEnabled();
+            this.managers.volume.setBoost(on, 1.5);
+            btn.classList.toggle('active', on);
+            btn.querySelector('.sidebar-label').textContent = on ? 'Boost On' : 'Boost Off';
+            this.managers.ui?.showToast(`Volume Boost ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
         };
-
-        button.addEventListener('click', clickHandler);
-        this.resources.eventListeners.push({ element: button, event: 'click', handler: clickHandler });
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
     setupCrossfadeButton() {
-        const button = document.getElementById('crossfade-button');
-        if (!button || !this.managers.crossfade) return;
+        const btn = document.getElementById('crossfade-button');
+        if (!btn || !this.managers.crossfade) return;
 
-        const savedState = localStorage.getItem('crossfadeEnabled') === 'true';
-        if (savedState) {
+        if (localStorage.getItem('crossfadeEnabled') === 'true') {
             this.managers.crossfade.setEnabled(true);
-            button.classList.add('active');
-            button.querySelector('.sidebar-label').textContent = 'Crossfade On';
+            btn.classList.add('active');
+            btn.querySelector('.sidebar-label').textContent = 'Crossfade On';
         }
+        btn.disabled = false;
 
-        button.disabled = false;
-
-        const clickHandler = () => {
-            const newState = !this.managers.crossfade.enabled;
-            this.managers.crossfade.setEnabled(newState);
-
-            button.classList.toggle('active', newState);
-            button.querySelector('.sidebar-label').textContent =
-                newState ? 'Crossfade On' : 'Crossfade Off';
-
-            localStorage.setItem('crossfadeEnabled', newState.toString());
-
-            this.managers.ui?.showToast(
-                `Crossfade ${newState ? 'enabled' : 'disabled'}`,
-                newState ? 'success' : 'info'
-            );
+        const handler = () => {
+            const on = !this.managers.crossfade.enabled;
+            this.managers.crossfade.setEnabled(on);
+            btn.classList.toggle('active', on);
+            btn.querySelector('.sidebar-label').textContent = on ? 'Crossfade On' : 'Crossfade Off';
+            localStorage.setItem('crossfadeEnabled', on.toString());
+            this.managers.ui?.showToast(`Crossfade ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
         };
-
-        button.addEventListener('click', clickHandler);
-        this.resources.eventListeners.push({ element: button, event: 'click', handler: clickHandler });
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
     setupDebugButton() {
-        const button = document.getElementById('debug-toggle');
-        if (!button) return;
+        const btn = document.getElementById('debug-toggle');
+        if (!btn) return;
 
-        const clickHandler = () => {
+        const handler = () => {
             this.state.debugMode = !this.state.debugMode;
-            button.classList.toggle('active', this.state.debugMode);
+            btn.classList.toggle('active', this.state.debugMode);
             this.elements.debugPanel?.classList.toggle('visible', this.state.debugMode);
             this.debugLog(`Debug mode: ${this.state.debugMode ? 'ON' : 'OFF'}`, 'info');
         };
-
-        button.addEventListener('click', clickHandler);
-        this.resources.eventListeners.push({ element: button, event: 'click', handler: clickHandler });
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
     setupCompactToggle() {
-        const button = document.getElementById('compact-toggle');
-        if (!button) return;
+        const btn = document.getElementById('compact-toggle');
+        if (!btn) return;
 
-        const savedMode = localStorage.getItem('compactMode') || 'full';
-        this.state.compactMode = savedMode;
-        this.applyCompactMode(savedMode);
+        const saved = localStorage.getItem('compactMode') || 'full';
+        this.state.compactMode = saved;
+        this.applyViewMode(saved);
 
-        const clickHandler = () => {
-            const modes      = ['full', 'compact', 'mini'];
-            const currentIdx = modes.indexOf(this.state.compactMode);
-            const newMode    = modes[(currentIdx + 1) % modes.length];
+        const NAMES = { full: 'Full View', compact: 'Compact', mini: 'Mini' };
 
-            this.state.compactMode = newMode;
-            this.applyCompactMode(newMode);
-            localStorage.setItem('compactMode', newMode);
-
-            const modeNames = { full: 'Full View', compact: 'Compact', mini: 'Mini' };
-            button.querySelector('.sidebar-label').textContent = modeNames[newMode];
-            this.managers.ui?.showToast(`View: ${modeNames[newMode]}`, 'info');
+        const handler = () => {
+            const modes = ['full', 'compact', 'mini'];
+            const next  = modes[(modes.indexOf(this.state.compactMode) + 1) % modes.length];
+            this.state.compactMode = next;
+            this.applyViewMode(next);
+            localStorage.setItem('compactMode', next);
+            btn.querySelector('.sidebar-label').textContent = NAMES[next];
+            this.managers.ui?.showToast(`View: ${NAMES[next]}`, 'info');
         };
-
-        button.addEventListener('click', clickHandler);
-        this.resources.eventListeners.push({ element: button, event: 'click', handler: clickHandler });
-    }
-
-    applyCompactMode(mode) {
-        if (!this.elements.mainContent) return;
-
-        this.elements.mainContent.classList.remove('compact-mode', 'mini-mode');
-        if (mode === 'compact') this.elements.mainContent.classList.add('compact-mode');
-        if (mode === 'mini')    this.elements.mainContent.classList.add('mini-mode');
-
-        this.managers.performance?.setMode(mode);
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
     setupStickyToggle() {
-        const button = document.getElementById('sticky-toggle');
-        if (!button) return;
+        const btn = document.getElementById('sticky-toggle');
+        if (!btn) return;
 
-        const savedState = localStorage.getItem('stickyMode') === 'true';
-        if (savedState) {
+        if (localStorage.getItem('stickyMode') === 'true') {
             this.state.stickyMode = true;
-            button.classList.add('active');
-            button.querySelector('.sidebar-label').textContent = 'Sticky On';
+            btn.classList.add('active');
+            btn.querySelector('.sidebar-label').textContent = 'Sticky On';
             this.applyStickyMode(true);
         }
 
-        const clickHandler = () => {
+        const handler = () => {
             this.state.stickyMode = !this.state.stickyMode;
-
-            button.classList.toggle('active', this.state.stickyMode);
-            button.querySelector('.sidebar-label').textContent =
+            btn.classList.toggle('active', this.state.stickyMode);
+            btn.querySelector('.sidebar-label').textContent =
                 this.state.stickyMode ? 'Sticky On' : 'Sticky Off';
-
             localStorage.setItem('stickyMode', this.state.stickyMode.toString());
             this.applyStickyMode(this.state.stickyMode);
-
             this.managers.ui?.showToast(
                 `Sticky mode ${this.state.stickyMode ? 'enabled' : 'disabled'}`,
                 this.state.stickyMode ? 'success' : 'info'
             );
         };
-
-        button.addEventListener('click', clickHandler);
-        this.resources.eventListeners.push({ element: button, event: 'click', handler: clickHandler });
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
     applyStickyMode(enabled) {
         if (!this.elements.metadataContainer) return;
-
         this.elements.metadataContainer.classList.toggle('sticky-mode', enabled);
-        const closeBtn = this.elements.metadataContainer.querySelector('.sticky-close');
-        if (closeBtn) closeBtn.style.display = enabled ? 'block' : 'none';
+        const close = this.elements.metadataContainer.querySelector('.sticky-close');
+        if (close) close.style.display = enabled ? 'block' : 'none';
     }
 
     setupStorageStatsButton() {
-        const button = document.getElementById('storage-stats-btn');
-        if (!button) return;
+        const btn = document.getElementById('storage-stats-btn');
+        if (!btn) return;
 
-        const clickHandler = async () => {
+        const handler = async () => {
             try {
-                let message = '💾 Storage Information\n\n';
+                let msg = '💾 Storage Information\n\n';
 
                 if (navigator.storage?.estimate) {
-                    const estimate = await navigator.storage.estimate();
-                    const usage    = (estimate.usage  / 1024 / 1024).toFixed(2);
-                    const quota    = (estimate.quota  / 1024 / 1024).toFixed(2);
-                    const percent  = ((estimate.usage / estimate.quota) * 100).toFixed(1);
-                    message += `Used: ${usage} MB\nTotal: ${quota} MB\nUsage: ${percent}%\n\n`;
+                    const e   = await navigator.storage.estimate();
+                    const usedMB  = (e.usage  / 1048576).toFixed(2);
+                    const totalMB = (e.quota  / 1048576).toFixed(2);
+                    const pct     = ((e.usage / e.quota) * 100).toFixed(1);
+                    msg += `Used: ${usedMB} MB\nTotal: ${totalMB} MB\nUsage: ${pct}%\n\n`;
                 }
 
                 if (this.managers.audioBuffer) {
-                    const stats = this.managers.audioBuffer.getStats();
-                    message += `Audio Buffer:\n`;
-                    message += `- Memory: ${stats.memoryUsedMB}\n`;
-                    message += `- Cached: ${stats.cachedTracks} tracks\n`;
-                    message += `- Hit rate: ${stats.hitRate}\n\n`;
+                    const s = this.managers.audioBuffer.getStats();
+                    msg += `Audio Buffer:\n- Memory: ${s.memoryUsedMB}\n- Cached: ${s.cachedTracks} tracks\n- Hit rate: ${s.hitRate}\n\n`;
                 }
 
                 if (this.managers.performance) {
                     const p = this.managers.performance.getStatsDisplay();
-                    message += `Performance:\n`;
-                    message += `- FPS: ${p.fps}\n`;
-                    message += `- Memory: ${p.memory}\n`;
-                    message += `- CPU: ${p.cpuLoad}\n`;
-                    message += `- Active: ${p.activeResources.intervals} intervals, `;
-                    message += `${p.activeResources.animations} animations\n\n`;
+                    msg += `Performance:\n- FPS: ${p.fps}\n- Memory: ${p.memory}\n- CPU: ${p.cpuLoad}\n`;
+                    msg += `- Active: ${p.activeResources.intervals} intervals, ${p.activeResources.animations} animations\n\n`;
                 }
 
-                message += `Blob URLs: ${this.resources.blobURLs.size}\n`;
-                message += `Event Listeners: ${this.resources.eventListeners.length}`;
-
-                alert(message);
-            } catch (error) {
-                this.debugLog(`Storage stats error: ${error.message}`, 'error');
+                msg += `Blob URLs: ${this.resources.blobURLs.size}\n`;
+                msg += `Event Listeners: ${this.resources.eventListeners.length}`;
+                alert(msg);
+            } catch (err) {
+                this.debugLog(`Storage stats error: ${err.message}`, 'error');
                 alert('Storage information not available');
             }
         };
-
-        button.addEventListener('click', clickHandler);
-        this.resources.eventListeners.push({ element: button, event: 'click', handler: clickHandler });
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
     setupCustomBackgroundButton() {
-        const button = document.getElementById('custom-bg-button');
-        if (!button) return;
+        const btn = document.getElementById('custom-bg-button');
+        if (!btn) return;
 
-        const clickHandler = () => {
+        const handler = () => {
             if (window.customBackground?.openPicker) {
                 window.customBackground.openPicker();
             } else {
                 this.managers.ui?.showToast('Background picker not available', 'error');
             }
         };
-
-        button.addEventListener('click', clickHandler);
-        this.resources.eventListeners.push({ element: button, event: 'click', handler: clickHandler });
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
     setupClearCacheButton() {
-        const button = document.getElementById('clear-cache-btn');
-        if (!button) return;
+        const btn = document.getElementById('clear-cache-btn');
+        if (!btn) return;
 
-        const clickHandler = async () => {
+        const handler = async () => {
             if (!confirm('Clear all cached data? This will not delete your playlist.')) return;
-
             try {
                 this.revokeBlobURLs();
                 this.managers.audioBuffer?.clearAllBuffers();
                 this.colorCache?.clear();
-
                 if ('caches' in window) {
                     const names = await caches.keys();
                     await Promise.all(names.map(n => caches.delete(n)));
                 }
-
                 this.managers.ui?.showToast('Cache cleared successfully', 'success');
                 this.debugLog('✅ Cache cleared', 'success');
-            } catch (error) {
-                this.debugLog(`Cache clear error: ${error.message}`, 'error');
+            } catch (err) {
+                this.debugLog(`Cache clear error: ${err.message}`, 'error');
                 this.managers.ui?.showToast('Error clearing cache', 'error');
             }
         };
-
-        button.addEventListener('click', clickHandler);
-        this.resources.eventListeners.push({ element: button, event: 'click', handler: clickHandler });
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
     // ── Keyboard shortcuts ────────────────────────────────────────────────────
 
     setupKeyboardShortcuts() {
-        const keydownHandler = (e) => {
+        const handler = e => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
             switch (e.key.toLowerCase()) {
                 case ' ':
-                    e.preventDefault();
-                    this.togglePlayPause();
-                    break;
+                    e.preventDefault(); this.togglePlayPause(); break;
 
                 case 'arrowright':
                     e.preventDefault();
-                    e.shiftKey ? this.playNext() : this.seekForward();
-                    break;
+                    e.shiftKey ? this.playNext() : this.seekForward(); break;
 
                 case 'arrowleft':
                     e.preventDefault();
-                    e.shiftKey ? this.playPrevious() : this.seekBackward();
-                    break;
+                    e.shiftKey ? this.playPrevious() : this.seekBackward(); break;
 
                 case 'arrowup':
-                    e.preventDefault();
-                    this.managers.volume?.increaseVolume(0.1);
-                    break;
+                    e.preventDefault(); this.managers.volume?.increaseVolume(0.1); break;
 
                 case 'arrowdown':
-                    e.preventDefault();
-                    this.managers.volume?.decreaseVolume(0.1);
-                    break;
+                    e.preventDefault(); this.managers.volume?.decreaseVolume(0.1); break;
 
-                case 'm':
-                    e.preventDefault();
-                    this.managers.volume?.toggleMute();
-                    break;
-
-                case 's':
-                    e.preventDefault();
-                    this.toggleShuffle();
-                    break;
-
-                case 'l':
-                    e.preventDefault();
-                    this.cycleLoopMode();
-                    break;
+                case 'm': e.preventDefault(); this.managers.volume?.toggleMute(); break;
+                case 's': e.preventDefault(); this.toggleShuffle(); break;
+                case 'l': e.preventDefault(); this.cycleLoopMode(); break;
 
                 case 'f':
                     if (this.managers.lyrics) {
-                        e.preventDefault();
-                        this.managers.lyrics.toggleFullscreen();
+                        e.preventDefault(); this.managers.lyrics.toggleFullscreen();
                     }
                     break;
 
@@ -849,23 +829,17 @@ class MusicPlayerApp {
                 case 'c': {
                     e.preventDefault();
                     const modes = ['full', 'compact', 'mini'];
-                    const idx   = modes.indexOf(this.state.compactMode);
-                    const next  = modes[(idx + 1) % modes.length];
+                    const next  = modes[(modes.indexOf(this.state.compactMode) + 1) % modes.length];
                     this.state.compactMode = next;
-                    this.applyCompactMode(next);
+                    this.applyViewMode(next);
                     localStorage.setItem('compactMode', next);
                     break;
                 }
             }
         };
 
-        document.addEventListener('keydown', keydownHandler);
-        this.resources.eventListeners.push({
-            element: document,
-            event:   'keydown',
-            handler: keydownHandler,
-        });
-
+        document.addEventListener('keydown', handler);
+        this.resources.eventListeners.push({ element: document, event: 'keydown', handler });
         this.debugLog('✅ Keyboard shortcuts enabled', 'success');
     }
 
@@ -873,11 +847,9 @@ class MusicPlayerApp {
 
     togglePlayPause() {
         if (!this.elements.player) return;
-
         if (this.elements.player.paused) {
-            this.elements.player.play().catch(e =>
-                this.debugLog(`Play failed: ${e.message}`, 'error')
-            );
+            this.elements.player.play()
+                .catch(e => this.debugLog(`Play failed: ${e.message}`, 'error'));
         } else {
             this.elements.player.pause();
         }
@@ -894,14 +866,13 @@ class MusicPlayerApp {
     seekBackward() {
         if (!this.elements.player) return;
         this.elements.player.currentTime = Math.max(
-            this.elements.player.currentTime - 5,
-            0
+            this.elements.player.currentTime - 5, 0
         );
     }
 
     async initializeBackgroundAudio() {
         try {
-            const success = await backgroundAudioHandler.init({
+            const ok = await backgroundAudioHandler.init({
                 player:               this.elements.player,
                 playlist:             () => this.state.playlist,
                 getCurrentTrackIndex: () => this.state.currentTrackIndex,
@@ -910,45 +881,41 @@ class MusicPlayerApp {
                     next:     () => this.playNext(),
                 },
             });
-
-            if (success) this.debugLog('✅ Background audio activated', 'success');
-        } catch (error) {
-            this.debugLog(`⚠️ Background audio: ${error.message}`, 'warning');
+            if (ok) this.debugLog('✅ Background audio activated', 'success');
+        } catch (err) {
+            this.debugLog(`⚠️ Background audio: ${err.message}`, 'warning');
         }
     }
 
     // ── Event listeners ───────────────────────────────────────────────────────
 
     setupEventListeners() {
-        const endedHandler          = () => this.handleTrackEnded();
-        const timeupdateHandler     = () => this.handleTimeUpdate();
-        const loadedmetadataHandler = () => this.handleMetadataLoaded();
-        const errorHandler          = (e) => this.handlePlayerError(e);
-        const playHandler           = () => this.handlePlay();
-        const pauseHandler          = () => this.handlePause();
-
-        this.elements.player.addEventListener('ended',          endedHandler);
-        this.elements.player.addEventListener('timeupdate',     timeupdateHandler);
-        this.elements.player.addEventListener('loadedmetadata', loadedmetadataHandler);
-        this.elements.player.addEventListener('error',          errorHandler);
-        this.elements.player.addEventListener('play',           playHandler);
-        this.elements.player.addEventListener('pause',          pauseHandler);
-
-        this.resources.eventListeners.push(
-            { element: this.elements.player, event: 'ended',          handler: endedHandler },
-            { element: this.elements.player, event: 'timeupdate',     handler: timeupdateHandler },
-            { element: this.elements.player, event: 'loadedmetadata', handler: loadedmetadataHandler },
-            { element: this.elements.player, event: 'error',          handler: errorHandler },
-            { element: this.elements.player, event: 'play',           handler: playHandler },
-            { element: this.elements.player, event: 'pause',          handler: pauseHandler }
-        );
-
-        const wire = (el, event, fn) => {
+        // Convenience wire helper: attaches, tracks for cleanup, checks null
+        const wire = (el, event, handler, opts) => {
             if (!el) return;
-            el.addEventListener(event, fn);
-            this.resources.eventListeners.push({ element: el, event, handler: fn });
+            el.addEventListener(event, handler, opts);
+            this.resources.eventListeners.push({ element: el, event, handler });
         };
 
+        // ── Audio element events ─────────────────────────────────────────────
+        // NOTE: 'timeupdate' intentionally omitted — rAF loop handles DOM updates
+        wire(this.elements.player, 'ended',          () => this.handleTrackEnded());
+        wire(this.elements.player, 'loadedmetadata', () => this.handleMetadataLoaded());
+        wire(this.elements.player, 'error',          e  => this.handlePlayerError(e));
+        wire(this.elements.player, 'play',           () => this.handlePlay());
+        wire(this.elements.player, 'pause',          () => this.handlePause());
+
+        // seeked: update progress once when user seeks while paused
+        wire(this.elements.player, 'seeked', () => {
+            if (this.elements.player.paused) {
+                this._renderProgress();
+                if (this.managers.lyrics && this.state.compactMode === 'full') {
+                    this.managers.lyrics.update(this.elements.player.currentTime, 'full');
+                }
+            }
+        });
+
+        // ── Transport buttons ─────────────────────────────────────────────────
         wire(this.elements.loadButton,     'click', () => this.loadFiles());
         wire(this.elements.folderButton,   'click', () => this.loadFromFolder());
         wire(this.elements.prevButton,     'click', () => this.playPrevious());
@@ -958,6 +925,15 @@ class MusicPlayerApp {
         wire(this.elements.loopButton,     'click', () => this.cycleLoopMode());
         wire(this.elements.clearButton,    'click', () => this.clearPlaylist());
 
+        // ── Page visibility — stop rAF when tab is hidden ─────────────────────
+        wire(document, 'visibilitychange', () => {
+            if (document.hidden) {
+                this._rafStop();
+            } else if (!this.elements.player?.paused) {
+                this._rafStart();
+            }
+        });
+
         if (this.elements.progressContainer) this.setupProgressBar();
         this.setupEqualizer();
 
@@ -965,11 +941,10 @@ class MusicPlayerApp {
     }
 
     setupProgressBar() {
-        // seekDebounce is added to resources.timeouts, removed when it fires
-        // or is cancelled — prevents the Set from growing unboundedly.
         let seekDebounce = null;
 
-        const mousedownHandler = (e) => {
+        const mousedownHandler = () => {
+            // Cancel any pending resume debounce
             if (seekDebounce !== null) {
                 clearTimeout(seekDebounce);
                 this.resources.timeouts.delete(seekDebounce);
@@ -978,57 +953,56 @@ class MusicPlayerApp {
 
             this.state.isSeekingProg = true;
             const wasPlaying = !this.elements.player.paused;
-            this.elements.player.pause();
+            this.elements.player.pause(); // also triggers _rafStop via 'pause' event
 
             seekDebounce = setTimeout(() => {
                 this.resources.timeouts.delete(seekDebounce);
                 seekDebounce = null;
                 if (wasPlaying) {
-                    this.elements.player.play().catch(err =>
-                        this.debugLog(`Resume error: ${err.message}`, 'error')
-                    );
+                    this.elements.player.play()
+                        .catch(e => this.debugLog(`Resume error: ${e.message}`, 'error'));
                 }
             }, this.config.SEEK_DEBOUNCE_DELAY_MS);
 
             this.resources.timeouts.add(seekDebounce);
         };
 
-        const mousemoveHandler = (e) => {
+        const mousemoveHandler = e => {
             if (!this.state.isSeekingProg) return;
-            this.updateProgressBar(e);
+            this._scrubProgress(e);
         };
 
-        const mouseupHandler = (e) => {
+        const mouseupHandler = e => {
             if (!this.state.isSeekingProg) return;
             this.state.isSeekingProg = false;
-            const newTime = this.updateProgressBar(e);
+            const newTime = this._scrubProgress(e);
             if (newTime !== null && isFinite(newTime)) {
-                try {
-                    this.elements.player.currentTime = newTime;
-                } catch (err) {
-                    this.debugLog(`Seek failed: ${err.message}`, 'error');
-                }
+                try { this.elements.player.currentTime = newTime; }
+                catch (err) { this.debugLog(`Seek failed: ${err.message}`, 'error'); }
             }
         };
 
         this.elements.progressContainer.addEventListener('mousedown', mousedownHandler);
-        document.addEventListener('mousemove', mousemoveHandler);
-        document.addEventListener('mouseup',   mouseupHandler);
+        // passive: true — we never call preventDefault in these handlers
+        document.addEventListener('mousemove', mousemoveHandler, { passive: true });
+        document.addEventListener('mouseup',   mouseupHandler,   { passive: true });
 
         this.resources.eventListeners.push(
             { element: this.elements.progressContainer, event: 'mousedown', handler: mousedownHandler },
             { element: document, event: 'mousemove', handler: mousemoveHandler },
-            { element: document, event: 'mouseup',   handler: mouseupHandler }
+            { element: document, event: 'mouseup',   handler: mouseupHandler  }
         );
     }
 
-    updateProgressBar(e) {
+    /** Compute and apply a scrub position from a mouse event. Returns new time. */
+    _scrubProgress(e) {
         const rect    = this.elements.progressContainer.getBoundingClientRect();
         const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         const newTime = percent * this.elements.player.duration;
 
         this.elements.progressBar.style.width        = `${percent * 100}%`;
         this.elements.currentTimeDisplay.textContent  = this.formatTime(newTime);
+        this._raf.lastPercent = percent * 100; // keep rAF in sync to avoid a jump
 
         return newTime;
     }
@@ -1042,21 +1016,19 @@ class MusicPlayerApp {
 
         sliders.forEach(({ slider, display, type }) => {
             if (!slider) return;
-
-            const inputHandler = (e) => {
-                const value = parseFloat(e.target.value);
-                if (display) display.textContent = `${value > 0 ? '+' : ''}${value} dB`;
-                this.updateEqualizer(type, value);
+            const handler = e => {
+                const v = parseFloat(e.target.value);
+                if (display) display.textContent = `${v > 0 ? '+' : ''}${v} dB`;
+                this.updateEqualizer(type, v);
             };
-
-            slider.addEventListener('input', inputHandler);
-            this.resources.eventListeners.push({ element: slider, event: 'input', handler: inputHandler });
+            slider.addEventListener('input', handler);
+            this.resources.eventListeners.push({ element: slider, event: 'input', handler });
         });
 
         if (this.elements.eqResetBtn) {
-            const resetHandler = () => this.resetEqualizer();
-            this.elements.eqResetBtn.addEventListener('click', resetHandler);
-            this.resources.eventListeners.push({ element: this.elements.eqResetBtn, event: 'click', handler: resetHandler });
+            const handler = () => this.resetEqualizer();
+            this.elements.eqResetBtn.addEventListener('click', handler);
+            this.resources.eventListeners.push({ element: this.elements.eqResetBtn, event: 'click', handler });
         }
     }
 
@@ -1065,51 +1037,29 @@ class MusicPlayerApp {
     async loadFiles() {
         try {
             if (!this.managers.fileLoading) {
-                this.managers.ui?.showToast('File loading not available', 'error');
-                return;
+                this.managers.ui?.showToast('File loading not available', 'error'); return;
             }
-
             const result = await this.managers.fileLoading.createFileInput();
-
             if (result?.success && result.playlist.length > 0) {
-                this.state.playlist          = result.playlist;
-                this.state.currentTrackIndex = -1;
-
-                this.managers.audioBuffer?.setPlaylist(this.state.playlist);
-                this.updatePlaylist();
-                this.savePlaylistToStorage();
-                this.managers.ui?.showToast(`Loaded ${result.playlist.length} tracks`, 'success');
-                this.startBackgroundAnalysis();
-                this.loadTrack(0);
+                this._applyNewPlaylist(result.playlist);
             }
-        } catch (error) {
-            if (error.name !== 'AbortError') {
-                this.debugLog(`Error loading: ${error.message}`, 'error');
-            }
+        } catch (err) {
+            if (err.name !== 'AbortError') this.debugLog(`Error loading: ${err.message}`, 'error');
         }
     }
 
     async loadFromFolder() {
         try {
             if (!('showDirectoryPicker' in window)) {
-                this.managers.ui?.showToast('Folder selection not supported', 'error');
-                return;
+                this.managers.ui?.showToast('Folder selection not supported', 'error'); return;
             }
-
-            const dirHandle = await window.showDirectoryPicker({ mode: 'read', startIn: 'music' });
-            this.state.folderHandle = dirHandle;
-
+            const dir = await window.showDirectoryPicker({ mode: 'read', startIn: 'music' });
+            this.state.folderHandle = dir;
             if (!this.managers.fileLoading) return;
 
-            const result = await this.managers.fileLoading.loadFromFolderHandle(dirHandle);
-
+            const result = await this.managers.fileLoading.loadFromFolderHandle(dir);
             if (result?.success && result.playlist.length > 0) {
-                this.state.playlist          = result.playlist;
-                this.state.currentTrackIndex = -1;
-
-                this.managers.audioBuffer?.setPlaylist(this.state.playlist);
-                this.updatePlaylist();
-                this.savePlaylistToStorage();
+                this._applyNewPlaylist(result.playlist);
 
                 if (this.managers.folderPersistence && result.stats) {
                     await this.managers.folderPersistence.updateMetadata({
@@ -1119,16 +1069,22 @@ class MusicPlayerApp {
                         totalSize:   result.stats.totalSize    || 0,
                     });
                 }
-
-                this.managers.ui?.showToast(`Loaded ${result.playlist.length} tracks`, 'success');
-                this.startBackgroundAnalysis();
-                this.loadTrack(0);
             }
-        } catch (error) {
-            if (error.name !== 'AbortError') {
-                this.debugLog(`Error: ${error.message}`, 'error');
-            }
+        } catch (err) {
+            if (err.name !== 'AbortError') this.debugLog(`Error: ${err.message}`, 'error');
         }
+    }
+
+    /** Shared logic after any successful file load. */
+    _applyNewPlaylist(playlist) {
+        this.state.playlist          = playlist;
+        this.state.currentTrackIndex = -1;
+        this.managers.audioBuffer?.setPlaylist(this.state.playlist);
+        this.updatePlaylist();
+        this.savePlaylistToStorage();
+        this.managers.ui?.showToast(`Loaded ${playlist.length} tracks`, 'success');
+        this.startBackgroundAnalysis();
+        this.loadTrack(0);
     }
 
     // ── Track loading ─────────────────────────────────────────────────────────
@@ -1151,9 +1107,10 @@ class MusicPlayerApp {
             this.elements.trackTitle.textContent = track.fileName;
         }
 
+        // Per-track volume memory
         if (this.managers.volume && track.metadata) {
-            const trackId = `${track.metadata.artist || 'Unknown'}_${track.metadata.title || track.fileName}`;
-            const applied = this.managers.volume.applyTrackVolume(trackId);
+            const id      = `${track.metadata.artist || 'Unknown'}_${track.metadata.title || track.fileName}`;
+            const applied = this.managers.volume.applyTrackVolume(id);
             if (!applied && track.analysis) {
                 this.managers.volume.applyVolume(this.managers.volume.getVolume(), true, track.analysis);
             }
@@ -1163,39 +1120,36 @@ class MusicPlayerApp {
             this.managers.autoEQ.applyAutoEQ(track);
         }
 
+        // Audio source: buffered → direct URL fallback
         if (this.managers.audioBuffer && track.file) {
-            const loadTrackIndex = index;
+            const capturedIndex = index;
 
-            this.managers.audioBuffer.getBuffer(loadTrackIndex).then(buffer => {
-                if (this.state.currentTrackIndex !== loadTrackIndex) return;
+            this.managers.audioBuffer.getBuffer(capturedIndex).then(buffer => {
+                if (this.state.currentTrackIndex !== capturedIndex) return;
 
-                const blob      = new Blob([buffer], { type: 'audio/mpeg' });
-                const bufferUrl = URL.createObjectURL(blob);
-                this.resources.blobURLs.add(bufferUrl);
-
-                this.elements.player.src = bufferUrl;
+                const url = URL.createObjectURL(new Blob([buffer], { type: 'audio/mpeg' }));
+                this.resources.blobURLs.add(url);
+                this.elements.player.src = url;
                 this.elements.player.load();
 
                 if (track.analysis?.silence?.start > 0.1) {
                     this.elements.player.currentTime = track.analysis.silence.start;
                 }
 
-                this.elements.player.play().catch(e =>
-                    this.debugLog(`Playback failed: ${e.message}`, 'warning')
-                );
+                this.elements.player.play()
+                    .catch(e => this.debugLog(`Playback failed: ${e.message}`, 'warning'));
 
-                this.managers.audioBuffer.preloadUpcoming(loadTrackIndex);
-            }).catch(() => {
-                this._playFromURL(track);
-            });
+                this.managers.audioBuffer.preloadUpcoming(capturedIndex);
+            }).catch(() => this._playFromURL(track));
         } else {
             this._playFromURL(track);
         }
 
+        // Lyrics
         if (track.vtt && this.managers.vtt && this.managers.lyrics) {
             try {
-                const parsedCues = await this.managers.vtt.loadVTTFile(track.vtt);
-                this.managers.lyrics.loadLyrics(parsedCues);
+                const cues = await this.managers.vtt.loadVTTFile(track.vtt);
+                this.managers.lyrics.loadLyrics(cues);
             } catch {
                 this.managers.lyrics.clearLyrics();
             }
@@ -1214,9 +1168,8 @@ class MusicPlayerApp {
     _playFromURL(track) {
         this.elements.player.src = track.audioURL;
         this.elements.player.load();
-        this.elements.player.play().catch(e =>
-            this.debugLog(`Playback failed: ${e.message}`, 'warning')
-        );
+        this.elements.player.play()
+            .catch(e => this.debugLog(`Playback failed: ${e.message}`, 'warning'));
     }
 
     // ── Resource management ───────────────────────────────────────────────────
@@ -1232,8 +1185,8 @@ class MusicPlayerApp {
         try {
             URL.revokeObjectURL(url);
             this.resources.blobURLs.delete(url);
-        } catch (error) {
-            this.debugLog(`⚠️ Failed to revoke blob URL: ${error.message}`, 'warning');
+        } catch (err) {
+            this.debugLog(`⚠️ Failed to revoke blob URL: ${err.message}`, 'warning');
         }
     }
 
@@ -1255,7 +1208,7 @@ class MusicPlayerApp {
         this.elements.trackAlbum.textContent  = metadata.album  || 'Unknown Album';
 
         if (metadata.image) {
-            this.elements.coverArt.src = metadata.image;
+            this.elements.coverArt.src    = metadata.image;
             this.elements.coverArt.onload = () => {
                 this.elements.coverArt.classList.add('loaded');
                 this.elements.coverPlaceholder.style.display = 'none';
@@ -1290,30 +1243,25 @@ class MusicPlayerApp {
     }
 
     updatePlaylistStatus() {
-        const count = this.state.playlist.length;
-        if (this.elements.playlistStatus) {
-            this.elements.playlistStatus.textContent =
-                `${count} track${count !== 1 ? 's' : ''} loaded`;
-        }
+        const n = this.state.playlist.length;
+        if (this.elements.playlistStatus)
+            this.elements.playlistStatus.textContent = `${n} track${n !== 1 ? 's' : ''} loaded`;
 
-        if (this.elements.clearButton)   this.elements.clearButton.disabled   = count === 0;
-        if (this.elements.shuffleButton) this.elements.shuffleButton.disabled = count === 0;
-        if (this.elements.loopButton)    this.elements.loopButton.disabled    = count === 0;
+        if (this.elements.clearButton)   this.elements.clearButton.disabled   = n === 0;
+        if (this.elements.shuffleButton) this.elements.shuffleButton.disabled = n === 0;
+        if (this.elements.loopButton)    this.elements.loopButton.disabled    = n === 0;
     }
 
     updateMediaSession() {
         if (!('mediaSession' in navigator) || this.state.currentTrackIndex === -1) return;
-
-        const track    = this.state.playlist[this.state.currentTrackIndex];
-        const metadata = track.metadata || {};
+        const track = this.state.playlist[this.state.currentTrackIndex];
+        const meta  = track.metadata || {};
 
         navigator.mediaSession.metadata = new MediaMetadata({
-            title:   metadata.title  || track.fileName,
-            artist:  metadata.artist || 'Unknown Artist',
-            album:   metadata.album  || 'Unknown Album',
-            artwork: metadata.image
-                ? [{ src: metadata.image, sizes: '512x512', type: 'image/png' }]
-                : [],
+            title:   meta.title  || track.fileName,
+            artist:  meta.artist || 'Unknown Artist',
+            album:   meta.album  || 'Unknown Album',
+            artwork: meta.image  ? [{ src: meta.image, sizes: '512x512', type: 'image/png' }] : [],
         });
 
         window.backgroundAudioHandler?.updateMediaSessionMetadata();
@@ -1325,28 +1273,26 @@ class MusicPlayerApp {
         if (this.state.playlist.length === 0) return;
 
         if (this.state.currentTrackIndex !== -1 && this.managers.volume) {
-            const track   = this.state.playlist[this.state.currentTrackIndex];
-            const trackId = `${track.metadata?.artist || 'Unknown'}_${track.metadata?.title || track.fileName}`;
-            this.managers.volume.rememberTrackVolume(trackId, this.managers.volume.getVolume());
+            const t  = this.state.playlist[this.state.currentTrackIndex];
+            const id = `${t.metadata?.artist || 'Unknown'}_${t.metadata?.title || t.fileName}`;
+            this.managers.volume.rememberTrackVolume(id, this.managers.volume.getVolume());
         }
 
-        let nextIndex;
+        let next;
         if (this.state.isShuffled) {
-            nextIndex = Math.floor(Math.random() * this.state.playlist.length);
+            next = Math.floor(Math.random() * this.state.playlist.length);
         } else {
-            nextIndex = this.state.currentTrackIndex + 1;
-            if (nextIndex >= this.state.playlist.length) {
-                if (this.state.loopMode === 'all') nextIndex = 0;
+            next = this.state.currentTrackIndex + 1;
+            if (next >= this.state.playlist.length) {
+                if (this.state.loopMode === 'all') next = 0;
                 else return;
             }
         }
-
-        this.loadTrack(nextIndex);
+        this.loadTrack(next);
     }
 
     playPrevious() {
         if (this.state.playlist.length === 0) return;
-
         if (this.state.currentTrackIndex > 0) {
             this.loadTrack(this.state.currentTrackIndex - 1);
         } else if (this.state.loopMode === 'all') {
@@ -1355,6 +1301,7 @@ class MusicPlayerApp {
     }
 
     handleTrackEnded() {
+        this._rafStop();
         if (this.state.loopMode === 'one') {
             this.elements.player.currentTime = 0;
             this.elements.player.play();
@@ -1372,8 +1319,7 @@ class MusicPlayerApp {
 
     cycleLoopMode() {
         const modes = ['off', 'all', 'one'];
-        const idx   = modes.indexOf(this.state.loopMode);
-        this.state.loopMode = modes[(idx + 1) % modes.length];
+        this.state.loopMode = modes[(modes.indexOf(this.state.loopMode) + 1) % modes.length];
         this.elements.loopButton?.classList.toggle('active', this.state.loopMode !== 'off');
         this.managers.ui?.showToast(`Loop: ${this.state.loopMode}`, 'info');
     }
@@ -1381,6 +1327,7 @@ class MusicPlayerApp {
     clearPlaylist() {
         if (!confirm('Clear playlist?')) return;
 
+        this._rafStop();
         this.managers.fileLoading?.cleanupPlaylist(this.state.playlist);
         this.managers.audioBuffer?.clearAllBuffers();
         this.revokeBlobURLs();
@@ -1394,30 +1341,17 @@ class MusicPlayerApp {
         this.clearMetadata();
         this.updatePlaylist();
 
+        // Reset progress display
+        this._raf.lastPercent = -1;
+        if (this.elements.progressBar)        this.elements.progressBar.style.width  = '0%';
+        if (this.elements.currentTimeDisplay) this.elements.currentTimeDisplay.textContent = '0:00';
+        if (this.elements.durationDisplay)    this.elements.durationDisplay.textContent    = '0:00';
+
         if (this.elements.prevButton) this.elements.prevButton.disabled = true;
         if (this.elements.nextButton) this.elements.nextButton.disabled = true;
     }
 
     // ── Audio event handlers ──────────────────────────────────────────────────
-
-    handleTimeUpdate() {
-        if (this.state.isSeekingProg) return;
-
-        if (this.managers.performance?.shouldUpdate('progress') !== false) {
-            const duration = this.elements.player.duration;
-            if (isFinite(duration) && duration > 0) {
-                const percent = (this.elements.player.currentTime / duration) * 100;
-                this.elements.progressBar.style.width        = `${percent}%`;
-                this.elements.currentTimeDisplay.textContent  =
-                    this.formatTime(this.elements.player.currentTime);
-            }
-        }
-
-        if (this.managers.lyrics &&
-            this.managers.performance?.shouldUpdate('lyrics') !== false) {
-            this.managers.lyrics.update(this.elements.player.currentTime, this.state.compactMode);
-        }
-    }
 
     handleMetadataLoaded() {
         if (!this.elements.durationDisplay) return;
@@ -1431,44 +1365,41 @@ class MusicPlayerApp {
                 this.managers.audioPipeline.resume();
             }
         }
-
         window.backgroundAudioHandler?.updatePlaybackState('playing');
         this.managers.performance?.setPlayState(true);
+        this._rafStart(); // ← begin progress + lyrics loop
     }
 
     handlePause() {
         window.backgroundAudioHandler?.updatePlaybackState('paused');
         this.managers.performance?.setPlayState(false);
+        this._rafStop(); // ← end progress + lyrics loop
     }
 
     handlePlayerError(e) {
         if (this.state.currentTrackIndex === -1) return;
-        const trackInfo = this.state.playlist[this.state.currentTrackIndex];
-        this.managers.errorRecovery?.handleAudioError(this.elements.player, trackInfo);
+        const info = this.state.playlist[this.state.currentTrackIndex];
+        this.managers.errorRecovery?.handleAudioError(this.elements.player, info);
     }
 
     // ── Equalizer ─────────────────────────────────────────────────────────────
 
     updateEqualizer(type, value) {
         if (!this.managers.audioPipeline?.isInitialized) return;
-
-        const filters = {
+        const f = {
             bass:   this.managers.audioPipeline.bassFilter,
             mid:    this.managers.audioPipeline.midFilter,
             treble: this.managers.audioPipeline.trebleFilter,
         };
-
-        if (filters[type]) this.managers.audioPipeline.setGain(filters[type], value);
+        if (f[type]) this.managers.audioPipeline.setGain(f[type], value);
     }
 
     resetEqualizer() {
-        const sliders = [
-            { slider: this.elements.eqBassSlider,   display: this.elements.bassValue   },
-            { slider: this.elements.eqMidSlider,    display: this.elements.midValue    },
-            { slider: this.elements.eqTrebleSlider, display: this.elements.trebleValue },
-        ];
-
-        sliders.forEach(({ slider, display }) => {
+        [
+            [this.elements.eqBassSlider,   this.elements.bassValue  ],
+            [this.elements.eqMidSlider,    this.elements.midValue   ],
+            [this.elements.eqTrebleSlider, this.elements.trebleValue],
+        ].forEach(([slider, display]) => {
             if (!slider) return;
             slider.value = 0;
             if (display) display.textContent = '0 dB';
@@ -1486,40 +1417,33 @@ class MusicPlayerApp {
 
     async startBackgroundAnalysis() {
         if (this.state.backgroundAnalysisRunning || !this.managers.analyzer) return;
-
         this.state.backgroundAnalysisRunning = true;
 
-        const needsAnalysis = this.state.playlist
+        const pending = this.state.playlist
             .map((track, index) => ({ track, index }))
             .filter(({ track }) => !track.analysis);
 
-        if (needsAnalysis.length === 0) {
+        if (pending.length === 0) {
             this.state.backgroundAnalysisRunning = false;
             return;
         }
 
-        for (let i = 0; i < needsAnalysis.length; i += 3) {
-            // Stop early if the app has been destroyed or the playlist cleared.
+        for (let i = 0; i < pending.length; i += 3) {
             if (this.state.destroyed || this.state.playlist.length === 0) break;
 
-            const batch = needsAnalysis.slice(i, i + 3);
-
-            await Promise.all(batch.map(async ({ track, index }) => {
-                // Skip stale slots (user loaded a new playlist mid-loop).
+            await Promise.all(pending.slice(i, i + 3).map(async ({ track, index }) => {
+                // Skip if the playlist slot has been replaced
                 if (this.state.playlist[index] !== track) return;
                 try {
-                    const response = await fetch(track.audioURL);
-                    const blob     = await response.blob();
+                    const blob     = await (await fetch(track.audioURL)).blob();
                     const file     = new File([blob], track.fileName, { type: 'audio/mpeg' });
                     const analysis = await this.managers.analyzer.analyzeTrack(file, track.fileName);
                     this.state.playlist[index].analysis = analysis;
-                } catch {
-                    // Silent fail — analysis is best-effort.
-                }
+                } catch { /* best-effort, silent fail */ }
             }));
 
             this.updatePlaylist();
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(r => setTimeout(r, 500));
         }
 
         this.state.backgroundAnalysisRunning = false;
@@ -1529,30 +1453,26 @@ class MusicPlayerApp {
 
     savePlaylistToStorage() {
         try {
-            const data = this.state.playlist.map(t => ({
-                fileName: t.fileName,
-                metadata: t.metadata,
-                hasVTT:   !!t.vtt,
-                duration: t.duration,
-            }));
-            localStorage.setItem('savedPlaylist', JSON.stringify(data));
-        } catch {
-            // Storage may be full; not fatal.
-        }
+            localStorage.setItem('savedPlaylist', JSON.stringify(
+                this.state.playlist.map(t => ({
+                    fileName: t.fileName,
+                    metadata: t.metadata,
+                    hasVTT:   !!t.vtt,
+                    duration: t.duration,
+                }))
+            ));
+        } catch { /* storage full, non-fatal */ }
     }
 
     async restoreState() {
         try {
-            if (localStorage.getItem('crossfadeEnabled') === 'true') {
+            if (localStorage.getItem('crossfadeEnabled') === 'true')
                 this.managers.crossfade?.setEnabled(true);
-            }
-            if (localStorage.getItem('autoEQEnabled') === 'true') {
+            if (localStorage.getItem('autoEQEnabled') === 'true')
                 this.managers.autoEQ?.setEnabled(true);
-            }
+
             this.managers.audioBuffer?.setShuffleState(this.state.isShuffled);
-        } catch {
-            // Silent fail.
-        }
+        } catch { /* silent fail */ }
     }
 
     // ── Metadata editor ───────────────────────────────────────────────────────
@@ -1561,46 +1481,45 @@ class MusicPlayerApp {
         const track = this.state.playlist[index];
         if (!track || !this.managers.metadataEditor) return;
 
-        const currentMetadata = {
-            title:  track.metadata?.title  || track.fileName,
-            artist: track.metadata?.artist || 'Unknown Artist',
-            album:  track.metadata?.album  || 'Unknown Album',
-        };
+        this.managers.metadataEditor.openEditor(
+            index,
+            {
+                title:  track.metadata?.title  || track.fileName,
+                artist: track.metadata?.artist || 'Unknown Artist',
+                album:  track.metadata?.album  || 'Unknown Album',
+            },
+            (trackIndex, newMeta) => {
+                if (this.managers.customMetadata) {
+                    this.managers.customMetadata.save(
+                        this.state.playlist[trackIndex].fileName,
+                        this.state.playlist[trackIndex].duration || 0,
+                        newMeta
+                    );
+                }
 
-        this.managers.metadataEditor.openEditor(index, currentMetadata, (trackIndex, newMetadata) => {
-            if (this.managers.customMetadata) {
-                this.managers.customMetadata.save(
-                    this.state.playlist[trackIndex].fileName,
-                    this.state.playlist[trackIndex].duration || 0,
-                    newMetadata
-                );
+                this.state.playlist[trackIndex].metadata = {
+                    ...this.state.playlist[trackIndex].metadata,
+                    ...newMeta,
+                    hasMetadata: true,
+                };
+
+                this.updatePlaylist();
+                if (trackIndex === this.state.currentTrackIndex)
+                    this.displayMetadata(this.state.playlist[trackIndex].metadata);
             }
-
-            this.state.playlist[trackIndex].metadata = {
-                ...this.state.playlist[trackIndex].metadata,
-                ...newMetadata,
-                hasMetadata: true,
-            };
-
-            this.updatePlaylist();
-
-            if (trackIndex === this.state.currentTrackIndex) {
-                this.displayMetadata(this.state.playlist[trackIndex].metadata);
-            }
-        });
+        );
     }
 
     // ── Utilities ─────────────────────────────────────────────────────────────
 
     formatTime(seconds) {
         if (!isFinite(seconds) || seconds < 0) return '0:00';
-        const mins = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
+        const m = Math.floor(seconds / 60);
+        const s = Math.floor(seconds % 60);
+        return `${m}:${s.toString().padStart(2, '0')}`;
     }
 
     debugLog(message, type = 'info') {
-        // Always print errors; everything else only in debug mode.
         if (!this.state.debugMode && type !== 'error') return;
 
         const prefix = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' }[type] ?? 'ℹ️';
@@ -1611,10 +1530,8 @@ class MusicPlayerApp {
             entry.className   = `debug-entry debug-${type}`;
             entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
             this.elements.debugPanel.appendChild(entry);
-
-            while (this.elements.debugPanel.children.length > 100) {
+            while (this.elements.debugPanel.children.length > 100)
                 this.elements.debugPanel.removeChild(this.elements.debugPanel.firstChild);
-            }
         }
     }
 
@@ -1622,13 +1539,14 @@ class MusicPlayerApp {
 
     destroy() {
         if (this.state.destroyed) {
-            this.debugLog('⚠️ App already destroyed', 'warning');
+            this.debugLog('⚠️ Already destroyed', 'warning');
             return;
         }
 
         this.debugLog('🧹 Destroying MusicPlayerApp…', 'info');
 
-        // Stop playback; clear src so the browser releases the media resource.
+        this._rafStop();
+
         if (this.elements.player) {
             this.elements.player.pause();
             this.elements.player.src = '';
@@ -1647,32 +1565,31 @@ class MusicPlayerApp {
         });
         this.resources.eventListeners = [];
 
-        // Call destroy() on managers that support it.
         ['performance', 'audioBuffer', 'audioPipeline', 'lyrics', 'ui'].forEach(key => {
-            const mgr = this.managers[key];
-            if (mgr && typeof mgr.destroy === 'function') {
-                try { mgr.destroy(); } catch (_) {}
+            const m = this.managers[key];
+            if (m && typeof m.destroy === 'function') {
+                try { m.destroy(); } catch (_) {}
             }
         });
 
         this.colorCache?.clear();
 
-        // Null out references to release the full object graph.
+        // Release the full object graph
         this.managers = {};
         this.elements = {};
 
         this.state.destroyed   = true;
         this.state.initialized = false;
 
-        this.debugLog('✅ MusicPlayerApp destroyed successfully', 'success');
+        this.debugLog('✅ Destroyed successfully', 'success');
     }
 }
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎵 Initializing - Clean v3.0 (no visualizer)');
+    console.log('🎵 Initializing — Clean v4.0');
     window.musicPlayerApp = new MusicPlayerApp();
     window.musicPlayerApp.init();
 });
 
-console.log('✅ Script loaded - Clean v3.0');
+console.log('✅ script.js loaded — Clean v4.0');
