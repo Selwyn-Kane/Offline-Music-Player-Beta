@@ -225,11 +225,6 @@ class LyricsManager {
                 }
             }
             
-            if (e.key === 'l' || e.key === 'L') {
-                e.preventDefault();
-                this.toggleFullscreen(!this.state.fullscreen);
-            }
-            
             if ((e.key === 'k' || e.key === 'K') && this.state.fullscreen) {
                 e.preventDefault();
                 this.toggleKaraokeMode();
