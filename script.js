@@ -57,6 +57,7 @@ class MusicPlayerApp {
             playlist:                  [],
             currentTrackIndex:         -1,
             isShuffled:                false,
+            shuffledPlaylist:          [], 
             loopMode:                  'off',
             debugMode:                 false,
             isSeekingProg:             false,
@@ -110,6 +111,7 @@ class MusicPlayerApp {
             this.setupSidebarButtons();
             await this.restoreState();
             this.connectManagersToPerformance();
+            this.setupFullscreenLyricsToggle();
             this.state.initialized = true;
             this.debugLog('✅ Music player initialized (Clean v4.0)', 'success');
         } catch (err) {
@@ -813,6 +815,61 @@ setupLyricsFetcherButton() {
     this.resources.eventListeners.push({ element: btn, event: 'click', handler });
 }
 
+   setupFullscreenLyricsToggle() {
+    const toggleBtn = document.getElementById('fullscreen-lyrics-toggle');
+    const fullscreenContainer = document.getElementById('fullscreen-lyrics');
+    
+    if (!toggleBtn || !fullscreenContainer || !this.managers.lyrics) return;
+    
+    const handler = () => {
+        const isHidden = fullscreenContainer.classList.contains('fullscreen-lyrics-hidden');
+        
+        if (isHidden) {
+            // Opening fullscreen
+            fullscreenContainer.classList.remove('fullscreen-lyrics-hidden');
+            fullscreenContainer.classList.add('show');
+            
+            // If main lyrics display is hidden (compact/mini mode), enable syncing for fullscreen
+            const mainLyricsHidden = this.state.compactMode !== 'full';
+            if (mainLyricsHidden && this.managers.lyrics) {
+                this.managers.lyrics._wasAutoSyncDisabled = !this.managers.lyrics.autoSync;
+                this.managers.lyrics.enableAutoSync?.();
+            }
+        } else {
+            // Closing fullscreen
+            fullscreenContainer.classList.add('fullscreen-lyrics-hidden');
+            fullscreenContainer.classList.remove('show');
+            
+            // If we enabled sync when opening and main display is still hidden, disable it again
+            const mainLyricsHidden = this.state.compactMode !== 'full';
+            if (mainLyricsHidden && this.managers.lyrics?._wasAutoSyncDisabled) {
+                this.managers.lyrics.disableAutoSync?.();
+                delete this.managers.lyrics._wasAutoSyncDisabled;
+            }
+        }
+    };
+    
+    toggleBtn.addEventListener('click', handler);
+    this.resources.eventListeners.push({ element: toggleBtn, event: 'click', handler });
+    
+    // Also handle the close button inside fullscreen
+    const closeBtn = document.getElementById('lyrics-close-btn');
+    if (closeBtn) {
+        const closeHandler = () => {
+            fullscreenContainer.classList.add('fullscreen-lyrics-hidden');
+            fullscreenContainer.classList.remove('show');
+            
+            const mainLyricsHidden = this.state.compactMode !== 'full';
+            if (mainLyricsHidden && this.managers.lyrics?._wasAutoSyncDisabled) {
+                this.managers.lyrics.disableAutoSync?.();
+                delete this.managers.lyrics._wasAutoSyncDisabled;
+            }
+        };
+        closeBtn.addEventListener('click', closeHandler);
+        this.resources.eventListeners.push({ element: closeBtn, event: 'click', handler: closeHandler });
+    }
+}
+
     // ── Keyboard shortcuts ────────────────────────────────────────────────────
 
     setupKeyboardShortcuts() {
@@ -1310,35 +1367,66 @@ case 'arrowleft':
     // ── Playback controls ─────────────────────────────────────────────────────
 
     playNext() {
-        if (this.state.playlist.length === 0) return;
+    if (this.state.playlist.length === 0) return;
 
-        if (this.state.currentTrackIndex !== -1 && this.managers.volume) {
-            const t  = this.state.playlist[this.state.currentTrackIndex];
-            const id = `${t.metadata?.artist || 'Unknown'}_${t.metadata?.title || t.fileName}`;
-            this.managers.volume.rememberTrackVolume(id, this.managers.volume.getVolume());
-        }
-
-        let next;
-        if (this.state.isShuffled) {
-            next = Math.floor(Math.random() * this.state.playlist.length);
-        } else {
-            next = this.state.currentTrackIndex + 1;
-            if (next >= this.state.playlist.length) {
-                if (this.state.loopMode === 'all') next = 0;
-                else return;
-            }
-        }
-        this.loadTrack(next);
+    if (this.state.currentTrackIndex !== -1 && this.managers.volume) {
+        const t  = this.state.playlist[this.state.currentTrackIndex];
+        const id = `${t.metadata?.artist || 'Unknown'}_${t.metadata?.title || t.fileName}`;
+        this.managers.volume.rememberTrackVolume(id, this.managers.volume.getVolume());
     }
 
+    let next;
+    if (this.state.isShuffled && this.state.shuffledPlaylist.length > 0) {
+        // Find current position in shuffled playlist
+        const currentPos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
+        const nextPos = currentPos + 1;
+        
+        if (nextPos >= this.state.shuffledPlaylist.length) {
+            if (this.state.loopMode === 'all') {
+                next = this.state.shuffledPlaylist[0];
+            } else {
+                return;
+            }
+        } else {
+            next = this.state.shuffledPlaylist[nextPos];
+        }
+    } else {
+        next = this.state.currentTrackIndex + 1;
+        if (next >= this.state.playlist.length) {
+            if (this.state.loopMode === 'all') next = 0;
+            else return;
+        }
+    }
+    this.loadTrack(next);
+}
+
     playPrevious() {
-        if (this.state.playlist.length === 0) return;
+    if (this.state.playlist.length === 0) return;
+    
+    let prev;
+    if (this.state.isShuffled && this.state.shuffledPlaylist.length > 0) {
+        // Find current position in shuffled playlist
+        const currentPos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
+        const prevPos = currentPos - 1;
+        
+        if (prevPos < 0) {
+            if (this.state.loopMode === 'all') {
+                prev = this.state.shuffledPlaylist[this.state.shuffledPlaylist.length - 1];
+            } else {
+                return;
+            }
+        } else {
+            prev = this.state.shuffledPlaylist[prevPos];
+        }
+        this.loadTrack(prev);
+    } else {
         if (this.state.currentTrackIndex > 0) {
             this.loadTrack(this.state.currentTrackIndex - 1);
         } else if (this.state.loopMode === 'all') {
             this.loadTrack(this.state.playlist.length - 1);
         }
     }
+}
 
     handleTrackEnded() {
         this._rafStop();
@@ -1351,18 +1439,65 @@ case 'arrowleft':
     }
 
     toggleShuffle() {
-        this.state.isShuffled = !this.state.isShuffled;
-        this.elements.shuffleButton?.classList.toggle('active', this.state.isShuffled);
-        this.managers.audioBuffer?.setShuffleState(this.state.isShuffled);
-        this.managers.ui?.showToast(`Shuffle ${this.state.isShuffled ? 'on' : 'off'}`, 'info');
+    this.state.isShuffled = !this.state.isShuffled;
+    this.elements.shuffleButton?.classList.toggle('active', this.state.isShuffled);
+    
+    if (this.state.isShuffled) {
+        // Create shuffled version of playlist
+        this.state.shuffledPlaylist = [...Array(this.state.playlist.length).keys()];
+        
+        // Fisher-Yates shuffle algorithm
+        for (let i = this.state.shuffledPlaylist.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [this.state.shuffledPlaylist[i], this.state.shuffledPlaylist[j]] = 
+            [this.state.shuffledPlaylist[j], this.state.shuffledPlaylist[i]];
+        }
+        
+        // Find current track in shuffled playlist
+        const currentInShuffled = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
+        if (currentInShuffled !== -1) {
+            // Move current track to front of shuffled playlist
+            this.state.shuffledPlaylist.splice(currentInShuffled, 1);
+            this.state.shuffledPlaylist.unshift(this.state.currentTrackIndex);
+        }
+    } else {
+        // Clear shuffled playlist
+        this.state.shuffledPlaylist = [];
     }
+    
+    this.managers.audioBuffer?.setShuffleState(this.state.isShuffled);
+    this.managers.ui?.showToast(`Shuffle ${this.state.isShuffled ? 'on' : 'off'}`, 'info');
+}
 
     cycleLoopMode() {
-        const modes = ['off', 'all', 'one'];
-        this.state.loopMode = modes[(modes.indexOf(this.state.loopMode) + 1) % modes.length];
-        this.elements.loopButton?.classList.toggle('active', this.state.loopMode !== 'off');
-        this.managers.ui?.showToast(`Loop: ${this.state.loopMode}`, 'info');
+    const modes = ['off', 'all', 'one'];
+    this.state.loopMode = modes[(modes.indexOf(this.state.loopMode) + 1) % modes.length];
+    
+    // Update button state
+    if (this.elements.loopButton) {
+        this.elements.loopButton.classList.toggle('active', this.state.loopMode !== 'off');
+        
+        // Special styling for loop-one mode
+        if (this.state.loopMode === 'one') {
+            this.elements.loopButton.classList.add('loop-one');
+        } else {
+            this.elements.loopButton.classList.remove('loop-one');
+        }
+        
+        // Update label text
+        const label = this.elements.loopButton.querySelector('.control-label');
+        if (label) {
+            const modeText = {
+                'off': 'Loop Off',
+                'all': 'Loop All',
+                'one': 'Loop One'
+            };
+            label.textContent = modeText[this.state.loopMode];
+        }
     }
+    
+    this.managers.ui?.showToast(`Loop: ${this.state.loopMode}`, 'info');
+}
 
     clearPlaylist() {
         if (!confirm('Clear playlist?')) return;
@@ -1374,6 +1509,7 @@ case 'arrowleft':
 
         this.state.playlist          = [];
         this.state.currentTrackIndex = -1;
+        this.state.shuffledPlaylist = [];
 
         this.elements.player.pause();
         this.elements.player.src = '';
