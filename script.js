@@ -64,7 +64,6 @@ class MusicPlayerApp {
             compactMode:               'full',
             folderHandle:              null,
             backgroundAnalysisRunning: false,
-            stickyMode:                false,
             initialized:               false,
             destroyed:                 false,
         };
@@ -93,6 +92,145 @@ class MusicPlayerApp {
             lastPercent:  -1,
         };
         this._boundRafTick = this._rafTick.bind(this);
+    }
+
+       // ── Color Extraction ──────────────────────────────────────────────────────
+
+    /**
+     * Extract dominant color from album art using canvas sampling
+     */
+    extractAlbumColor(imageElement) {
+        if (!imageElement || !imageElement.complete || !imageElement.naturalWidth) {
+            return null;
+        }
+
+        try {
+            // Check cache first
+            const cacheKey = imageElement.src;
+            if (this.colorCache.has(cacheKey)) {
+                return this.colorCache.get(cacheKey);
+            }
+
+            // Create canvas for color sampling
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Use small size for performance
+            const size = 50;
+            canvas.width = size;
+            canvas.height = size;
+            
+            // Draw scaled image
+            ctx.drawImage(imageElement, 0, 0, size, size);
+            
+            // Get image data
+            const imageData = ctx.getImageData(0, 0, size, size);
+            const data = imageData.data;
+            
+            // Calculate average color (ignoring very dark/light pixels)
+            let r = 0, g = 0, b = 0, count = 0;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                const pr = data[i];
+                const pg = data[i + 1];
+                const pb = data[i + 2];
+                const brightness = (pr + pg + pb) / 3;
+                
+                // Skip very dark or very light pixels
+                if (brightness > 20 && brightness < 235) {
+                    r += pr;
+                    g += pg;
+                    b += pb;
+                    count++;
+                }
+            }
+            
+            if (count === 0) {
+                return null;
+            }
+            
+            r = Math.floor(r / count);
+            g = Math.floor(g / count);
+            b = Math.floor(b / count);
+            
+            // Create color object
+            const color = {
+                r, g, b,
+                rgb: `rgb(${r}, ${g}, ${b})`,
+                rgba: (alpha) => `rgba(${r}, ${g}, ${b}, ${alpha})`,
+                darken: (amount) => {
+                    const nr = Math.max(0, r - amount);
+                    const ng = Math.max(0, g - amount);
+                    const nb = Math.max(0, b - amount);
+                    return `rgb(${nr}, ${ng}, ${nb})`;
+                },
+                lighten: (amount) => {
+                    const nr = Math.min(255, r + amount);
+                    const ng = Math.min(255, g + amount);
+                    const nb = Math.min(255, b + amount);
+                    return `rgb(${nr}, ${ng}, ${nb})`;
+                }
+            };
+            
+            // Cache the result
+            this.colorCache.set(cacheKey, color);
+            
+            return color;
+        } catch (err) {
+            this.debugLog(`Color extraction failed: ${err.message}`, 'warning');
+            return null;
+        }
+    }
+
+    /**
+     * Apply extracted color to UI elements
+     */
+    applyAlbumColor(color) {
+        if (!color) {
+            // Reset to defaults
+            if (this.elements.metadataContainer) {
+                this.elements.metadataContainer.style.background = 'linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)';
+                this.elements.metadataContainer.style.boxShadow = '0 8px 32px rgba(220, 53, 69, 0.2)';
+            }
+            
+            // Reset body background only if no custom background
+            if (!document.body.classList.contains('custom-bg')) {
+                document.body.style.background = '#0a0a0a';
+                document.body.style.backgroundImage = `
+                    radial-gradient(circle at top right, rgba(220, 53, 69, 0.05), transparent 40%),
+                    radial-gradient(circle at bottom left, rgba(0, 123, 255, 0.05), transparent 40%)
+                `;
+            }
+            
+            // Store default colors globally for lyrics
+            window.albumColors = null;
+            return;
+        }
+        
+        // Store colors globally for fullscreen lyrics
+        window.albumColors = color;
+
+       // Pass colors to lyrics manager
+if (this.managers.lyrics) {
+    this.managers.lyrics.setDominantColor(color);
+}
+        
+        // Apply gradient to metadata container
+        if (this.elements.metadataContainer) {
+            const gradient = `linear-gradient(135deg, ${color.darken(40)} 0%, ${color.darken(60)} 100%)`;
+            this.elements.metadataContainer.style.background = gradient;
+            this.elements.metadataContainer.style.boxShadow = `0 8px 32px ${color.rgba(0.4)}`;
+            this.elements.metadataContainer.style.border = `1px solid ${color.rgba(0.3)}`;
+        }
+        
+        // Apply to body background only if no custom background
+        if (!document.body.classList.contains('custom-bg')) {
+            document.body.style.background = '#0a0a0a';
+            document.body.style.backgroundImage = `
+                radial-gradient(circle at top right, ${color.rgba(0.15)}, transparent 40%),
+                radial-gradient(circle at bottom left, ${color.rgba(0.1)}, transparent 40%)
+            `;
+        }
     }
 
     // ── Bootstrap ─────────────────────────────────────────────────────────────
@@ -560,7 +698,6 @@ class MusicPlayerApp {
         this.setupCrossfadeButton();
         this.setupDebugButton();
         this.setupCompactToggle();
-        this.setupStickyToggle();
         this.setupStorageStatsButton();
         this.setupCustomBackgroundButton();
         this.setupClearCacheButton();
@@ -678,40 +815,6 @@ class MusicPlayerApp {
         };
         btn.addEventListener('click', handler);
         this.resources.eventListeners.push({ element: btn, event: 'click', handler });
-    }
-
-    setupStickyToggle() {
-        const btn = document.getElementById('sticky-toggle');
-        if (!btn) return;
-
-        if (localStorage.getItem('stickyMode') === 'true') {
-            this.state.stickyMode = true;
-            btn.classList.add('active');
-            btn.querySelector('.sidebar-label').textContent = 'Sticky On';
-            this.applyStickyMode(true);
-        }
-
-        const handler = () => {
-            this.state.stickyMode = !this.state.stickyMode;
-            btn.classList.toggle('active', this.state.stickyMode);
-            btn.querySelector('.sidebar-label').textContent =
-                this.state.stickyMode ? 'Sticky On' : 'Sticky Off';
-            localStorage.setItem('stickyMode', this.state.stickyMode.toString());
-            this.applyStickyMode(this.state.stickyMode);
-            this.managers.ui?.showToast(
-                `Sticky mode ${this.state.stickyMode ? 'enabled' : 'disabled'}`,
-                this.state.stickyMode ? 'success' : 'info'
-            );
-        };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
-    }
-
-    applyStickyMode(enabled) {
-        if (!this.elements.metadataContainer) return;
-        this.elements.metadataContainer.classList.toggle('sticky-mode', enabled);
-        const close = this.elements.metadataContainer.querySelector('.sticky-close');
-        if (close) close.style.display = enabled ? 'block' : 'none';
     }
 
     setupStorageStatsButton() {
@@ -1314,29 +1417,35 @@ case 'arrowleft':
     // ── Metadata display ──────────────────────────────────────────────────────
 
     displayMetadata(metadata) {
-        if (!metadata) return;
+    if (!metadata) return;
 
-        this.elements.trackTitle.textContent  = metadata.title  || 'Unknown Title';
-        this.elements.trackArtist.textContent = metadata.artist || 'Unknown Artist';
-        this.elements.trackAlbum.textContent  = metadata.album  || 'Unknown Album';
+    this.elements.trackTitle.textContent  = metadata.title  || 'Unknown Title';
+    this.elements.trackArtist.textContent = metadata.artist || 'Unknown Artist';
+    this.elements.trackAlbum.textContent  = metadata.album  || 'Unknown Album';
 
-        if (metadata.image) {
-            this.elements.coverArt.src    = metadata.image;
-            this.elements.coverArt.onload = () => {
-                this.elements.coverArt.classList.add('loaded');
-                this.elements.coverPlaceholder.style.display = 'none';
-            };
-            this.elements.coverArt.onerror = () => {
-                this.elements.coverArt.src = '';
-                this.elements.coverArt.classList.remove('loaded');
-                this.elements.coverPlaceholder.style.display = 'flex';
-            };
-        } else {
+    if (metadata.image) {
+        this.elements.coverArt.src    = metadata.image;
+        this.elements.coverArt.onload = () => {
+            this.elements.coverArt.classList.add('loaded');
+            this.elements.coverPlaceholder.style.display = 'none';
+            
+            // Extract and apply color from album art
+            const color = this.extractAlbumColor(this.elements.coverArt);
+            this.applyAlbumColor(color);
+        };
+        this.elements.coverArt.onerror = () => {
             this.elements.coverArt.src = '';
             this.elements.coverArt.classList.remove('loaded');
             this.elements.coverPlaceholder.style.display = 'flex';
-        }
+            this.applyAlbumColor(null); // Reset to default colors
+        };
+    } else {
+        this.elements.coverArt.src = '';
+        this.elements.coverArt.classList.remove('loaded');
+        this.elements.coverPlaceholder.style.display = 'flex';
+        this.applyAlbumColor(null); // Reset to default colors
     }
+}
 
     clearMetadata() {
         this.elements.trackTitle.textContent  = 'No track loaded';
@@ -1346,6 +1455,7 @@ case 'arrowleft':
         this.elements.coverArt.classList.remove('loaded');
         this.elements.coverPlaceholder.style.display = 'flex';
         this.managers.lyrics?.clearLyrics();
+        this.applyAlbumColor(null);
     }
 
     // ── Playlist helpers ──────────────────────────────────────────────────────
