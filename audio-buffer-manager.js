@@ -1,604 +1,500 @@
 /* ============================================
-   AUDIO BUFFER MANAGER v2.0 - MEMORY LEAK FIXED
-   Efficient audio buffering with aggressive cleanup
-
-   CRITICAL FIXES FROM v1.0:
-   - setInterval in startMemoryMonitoring() was never stored or cleared → FIXED
-   - FileReader references never nulled after use → FIXED
-   - No destroy() method (script.js calls it but it didn't exist) → FIXED
-   - No load cancellation (in-flight loads continued after destroy) → FIXED
-   - LRU eviction had a const re-declaration bug inside loop → FIXED
-   - No initialized/destroyed state guards → FIXED
-   - No progress callbacks (feeds the "progress updates missing" bug) → FIXED
-   - Preloading was not shuffle-aware (preloaded wrong tracks) → FIXED
+   AUDIO BUFFER MANAGER v3.0
+   Clean, memory-safe audio buffering system
    ============================================ */
 
 class AudioBufferManager {
     constructor(debugLog = console.log) {
         this.debugLog = debugLog;
-
-        // State flags - prevent double init/destroy
-        this.state = {
+        
+        // Lifecycle state
+        this._state = {
             initialized: false,
             destroyed: false
         };
-
-        // Configuration based on device tier
-        this.config = {
-            deviceTier: 'medium',
-            bufferSize: {
-                high:   10 * 1024 * 1024,  // 10 MB
-                medium:  5 * 1024 * 1024,  //  5 MB
-                low:     2 * 1024 * 1024   //  2 MB
-            },
-            preloadCount: {
-                high:   3,
-                medium: 2,
-                low:    1
-            },
-            maxCachedTracks: {
-                high:   10,
-                medium:  5,
-                low:     3
-            }
+        
+        // Device-based configuration
+        this._config = this._detectDeviceConfig();
+        
+        // Core storage
+        this._buffers = new Map();
+        this._metadata = new Map();
+        this._pendingLoads = new Map();
+        
+        // Resource registry for cleanup
+        this._resources = {
+            intervals: new Set(),
+            activeReaders: new Map(),
+            blobUrls: new Set()
         };
-
-        // Buffer storage
-        this.buffers        = new Map();  // trackIndex → ArrayBuffer
-        this.bufferMetadata = new Map();  // trackIndex → metadata object
-        this.loadingPromises = new Map(); // trackIndex → Promise (dedup concurrent requests)
-
-        // CRITICAL: Resource tracking for cleanup
-        this.resources = {
-            intervals:   new Set(), // All setInterval IDs
-            activeLoads: new Map()  // trackIndex → { cancelled: bool, reader: FileReader|null }
-        };
-
-        // Statistics
-        this.stats = {
-            totalLoaded:  0,
+        
+        // Metrics
+        this._stats = {
+            totalLoaded: 0,
             totalEvicted: 0,
-            cacheHits:    0,
-            cacheMisses:  0,
-            memoryUsed:   0
+            cacheHits: 0,
+            cacheMisses: 0,
+            memoryUsed: 0
         };
-
-        // Playback state
-        this.currentTrackIndex = -1;
-        this.isShuffled        = false;
-        this.playlist          = [];
-
-        // Callback hooks - connect to script.js for progress updates
-        this.callbacks = {
-            onLoadStart:      null,  // (trackIndex, fileName) => void
-            onLoadProgress:   null,  // (trackIndex, fileName, loaded, total) => void
-            onLoadComplete:   null,  // (trackIndex, fileName) => void
-            onLoadError:      null,  // (trackIndex, fileName, error) => void
-            onMemoryWarning:  null,  // (usagePercent) => void
-            onPreloadComplete: null  // (preloadedIndices[]) => void
+        
+        // Playback context
+        this._playback = {
+            currentIndex: -1,
+            isShuffled: false,
+            playlist: []
         };
-
-        this.init();
+        
+        // External callbacks
+        this._callbacks = this._createCallbackStubs();
+        
+        this._initialize();
     }
-
-    // ─── INITIALIZATION ────────────────────────────────────────────────────────
-
-    init() {
-        if (this.state.initialized) {
-            this.debugLog('⚠️ AudioBufferManager already initialized', 'warning');
+    
+    // ========== INITIALIZATION ==========
+    
+    _initialize() {
+        if (this._state.initialized) {
+            this.debugLog('⚠️ Already initialized', 'warning');
             return;
         }
-
-        this.detectDeviceTier();
-        this.startMemoryMonitoring();
-
-        this.state.initialized = true;
-        this.debugLog('✅ Audio Buffer Manager v2.0 initialized (Memory Leak Fixed)', 'success');
+        
+        this._startMemoryMonitoring();
+        this._state.initialized = true;
+        
+        this.debugLog(`✅ AudioBufferManager v3.0 initialized (${this._config.tier} tier)`, 'success');
     }
-
-    detectDeviceTier() {
+    
+    _detectDeviceConfig() {
         const memory = navigator.deviceMemory || 4;
-        const cores  = navigator.hardwareConcurrency || 2;
-
-        if (memory >= 8 && cores >= 4) {
-            this.config.deviceTier = 'high';
-        } else if (memory >= 4 && cores >= 2) {
-            this.config.deviceTier = 'medium';
-        } else {
-            this.config.deviceTier = 'low';
-        }
-
-        this.debugLog(`📱 Device tier: ${this.config.deviceTier} (${memory}GB RAM, ${cores} cores)`, 'info');
+        const cores = navigator.hardwareConcurrency || 2;
+        
+        let tier = 'medium';
+        if (memory >= 8 && cores >= 4) tier = 'high';
+        else if (memory < 4 || cores < 2) tier = 'low';
+        
+        const configs = {
+            high: { maxMemory: 10 * 1024 * 1024, maxTracks: 10, preloadCount: 3 },
+            medium: { maxMemory: 5 * 1024 * 1024, maxTracks: 5, preloadCount: 2 },
+            low: { maxMemory: 2 * 1024 * 1024, maxTracks: 3, preloadCount: 1 }
+        };
+        
+        return { tier, ...configs[tier], memory, cores };
     }
-
-    /**
-     * FIXED: Interval ID is now tracked so it can be cleared in destroy()
-     */
-    startMemoryMonitoring() {
+    
+    _startMemoryMonitoring() {
         if (!performance.memory) return;
-
+        
         const intervalId = setInterval(() => {
-            if (this.state.destroyed) return;
-
-            const usedMB  = performance.memory.usedJSHeapSize / 1048576;
-            const limitMB = performance.memory.jsHeapSizeLimit / 1048576;
-            const usage   = (usedMB / limitMB) * 100;
-
+            if (this._state.destroyed) return;
+            
+            const usage = (performance.memory.usedJSHeapSize / performance.memory.jsHeapSizeLimit) * 100;
+            
             if (usage > 80) {
-                this.debugLog(`⚠️ High memory (${usage.toFixed(1)}%), cleaning up buffers`, 'warning');
-                this.callbacks.onMemoryWarning?.(usage);
-                this.cleanupOldBuffers();
+                this.debugLog(`⚠️ Memory pressure at ${usage.toFixed(1)}%`, 'warning');
+                this._callbacks.onMemoryWarning?.(usage);
+                this._evictStaleBuffers();
             }
         }, 5000);
-
-        // CRITICAL: Track it so destroy() can clear it
-        this.resources.intervals.add(intervalId);
+        
+        this._resources.intervals.add(intervalId);
     }
-
-    // ─── CALLBACK REGISTRATION ─────────────────────────────────────────────────
-
-    /**
-     * Register callbacks for progress reporting and event hooks.
-     * Called by script.js after construction to wire up UI updates.
-     *
-     * @param {object} callbacks - Map of callback names to functions
-     */
+    
+    _createCallbackStubs() {
+        return {
+            onLoadStart: null,
+            onLoadProgress: null,
+            onLoadComplete: null,
+            onLoadError: null,
+            onMemoryWarning: null,
+            onPreloadComplete: null
+        };
+    }
+    
+    // ========== PUBLIC API ==========
+    
     setCallbacks(callbacks = {}) {
-        Object.assign(this.callbacks, callbacks);
+        Object.assign(this._callbacks, callbacks);
     }
-
-    // ─── PLAYLIST MANAGEMENT ──────────────────────────────────────────────────
-
+    
     setPlaylist(playlist) {
-        this.playlist = playlist;
+        this._playback.playlist = playlist;
     }
-
-    /**
-     * Keep the manager aware of shuffle state so preloading is skipped
-     * when shuffle is active (we don't know the next track ahead of time).
-     */
+    
     setShuffleState(isShuffled) {
-        this.isShuffled = isShuffled;
+        this._playback.isShuffled = isShuffled;
     }
-
-    // ─── BUFFER LOADING ────────────────────────────────────────────────────────
-
-    /**
-     * Load audio buffer for a track, with caching and dedup.
-     * @param {number} trackIndex
-     * @param {File}   audioFile
-     * @returns {Promise<ArrayBuffer>}
-     */
+    
     async loadBuffer(trackIndex, audioFile) {
-        if (this.state.destroyed) {
-            throw new Error('AudioBufferManager has been destroyed');
+        this._ensureNotDestroyed();
+        
+        // Check cache first
+        if (this._buffers.has(trackIndex)) {
+            this._stats.cacheHits++;
+            this._touchMetadata(trackIndex);
+            return this._buffers.get(trackIndex);
         }
-
-        // Cache hit
-        if (this.buffers.has(trackIndex)) {
-            this.stats.cacheHits++;
-            this.updateAccessTime(trackIndex);
-            return this.buffers.get(trackIndex);
+        
+        // Deduplicate concurrent requests
+        if (this._pendingLoads.has(trackIndex)) {
+            this._stats.cacheHits++;
+            return this._pendingLoads.get(trackIndex);
         }
-
-        // Already loading - return the existing promise to avoid duplicate reads
-        if (this.loadingPromises.has(trackIndex)) {
-            this.stats.cacheHits++;  // counts as hit - no duplicate IO
-            return this.loadingPromises.get(trackIndex);
-        }
-
-        this.stats.cacheMisses++;
-        this.callbacks.onLoadStart?.(trackIndex, audioFile.name);
-
-        const loadPromise = this._loadAudioFile(audioFile, trackIndex);
-        this.loadingPromises.set(trackIndex, loadPromise);
-
+        
+        // New load
+        this._stats.cacheMisses++;
+        this._callbacks.onLoadStart?.(trackIndex, audioFile.name);
+        
+        const loadPromise = this._performLoad(trackIndex, audioFile);
+        this._pendingLoads.set(trackIndex, loadPromise);
+        
         try {
             const buffer = await loadPromise;
-
-            // Guard: manager may have been destroyed while we were loading
-            if (this.state.destroyed) {
-                throw new Error('Load cancelled: manager destroyed');
-            }
-
-            this.buffers.set(trackIndex, buffer);
-            this.bufferMetadata.set(trackIndex, {
-                size:         buffer.byteLength,
-                loadedAt:     Date.now(),
-                lastAccessed: Date.now(),
-                accessCount:  1,
-                fileName:     audioFile.name
-            });
-
-            this.stats.totalLoaded++;
-            this.stats.memoryUsed += buffer.byteLength;
-
-            this.enforceMemoryLimit();
-            this.callbacks.onLoadComplete?.(trackIndex, audioFile.name);
-
+            this._storeBuffer(trackIndex, buffer, audioFile.name);
+            this._callbacks.onLoadComplete?.(trackIndex, audioFile.name);
             return buffer;
-
+        } catch (error) {
+            this._callbacks.onLoadError?.(trackIndex, audioFile.name, error);
+            throw error;
         } finally {
-            this.loadingPromises.delete(trackIndex);
+            this._pendingLoads.delete(trackIndex);
         }
     }
-
-    /**
-     * FIXED: FileReader references are now tracked in resources.activeLoads
-     * and nulled after use to release memory. onprogress feeds the UI.
-     *
-     * @private
-     */
-    async _loadAudioFile(audioFile, trackIndex) {
+    
+    async getBuffer(trackIndex) {
+        this._ensureNotDestroyed();
+        
+        if (this._buffers.has(trackIndex)) {
+            this._touchMetadata(trackIndex);
+            return this._buffers.get(trackIndex);
+        }
+        
+        const track = this._playback.playlist[trackIndex];
+        if (!track?.file) {
+            throw new Error(`Track ${trackIndex} not available`);
+        }
+        
+        return this.loadBuffer(trackIndex, track.file);
+    }
+    
+    async preloadUpcoming(currentIndex) {
+        if (this._state.destroyed || this._playback.isShuffled) {
+            return;
+        }
+        
+        this._playback.currentIndex = currentIndex;
+        
+        const targets = this._calculatePreloadTargets(currentIndex);
+        if (targets.length === 0) return;
+        
+        this.debugLog(`🔄 Preloading ${targets.length} track(s)`, 'info');
+        
+        const results = await Promise.allSettled(
+            targets.map(idx => {
+                const track = this._playback.playlist[idx];
+                return this.loadBuffer(idx, track.file);
+            })
+        );
+        
+        const successful = targets.filter((_, i) => results[i].status === 'fulfilled');
+        this._callbacks.onPreloadComplete?.(successful);
+    }
+    
+    cancelLoad(trackIndex) {
+        const reader = this._resources.activeReaders.get(trackIndex);
+        if (!reader) return;
+        
+        reader.cancelled = true;
+        
+        if (reader.instance?.readyState === FileReader.LOADING) {
+            try {
+                reader.instance.abort();
+            } catch (e) {
+                // Ignore abort errors
+            }
+        }
+        
+        this._cleanupReader(trackIndex);
+        this._pendingLoads.delete(trackIndex);
+        
+        this.debugLog(`🚫 Cancelled load for track ${trackIndex}`, 'info');
+    }
+    
+    cancelAllLoads() {
+        const indices = Array.from(this._resources.activeReaders.keys());
+        indices.forEach(idx => this.cancelLoad(idx));
+        this.debugLog(`🚫 Cancelled ${indices.length} load(s)`, 'info');
+    }
+    
+    clearBuffer(trackIndex) {
+        if (!this._buffers.has(trackIndex)) return;
+        
+        const meta = this._metadata.get(trackIndex);
+        if (meta) {
+            this._stats.memoryUsed -= meta.size;
+            this._stats.totalEvicted++;
+        }
+        
+        this._buffers.delete(trackIndex);
+        this._metadata.delete(trackIndex);
+    }
+    
+    clearAllBuffers() {
+        this._buffers.clear();
+        this._metadata.clear();
+        this._pendingLoads.clear();
+        this._stats.memoryUsed = 0;
+        
+        this.debugLog('🧹 All buffers cleared', 'info');
+    }
+    
+    getStats() {
+        const hitRate = (this._stats.cacheHits + this._stats.cacheMisses) > 0
+            ? ((this._stats.cacheHits / (this._stats.cacheHits + this._stats.cacheMisses)) * 100).toFixed(1)
+            : '0';
+        
+        return {
+            ...this._stats,
+            memoryUsedMB: (this._stats.memoryUsed / 1048576).toFixed(2),
+            memoryLimitMB: (this._config.maxMemory / 1048576).toFixed(2),
+            cachedTracks: this._buffers.size,
+            activeLoads: this._resources.activeReaders.size,
+            hitRate: `${hitRate}%`,
+            deviceTier: this._config.tier,
+            isShuffled: this._playback.isShuffled,
+            initialized: this._state.initialized,
+            destroyed: this._state.destroyed
+        };
+    }
+    
+    getBufferInfo() {
+        return Array.from(this._metadata.entries())
+            .map(([trackIndex, meta]) => ({
+                trackIndex,
+                fileName: meta.fileName || `track_${trackIndex}`,
+                sizeMB: (meta.size / 1048576).toFixed(2),
+                ageSeconds: Math.round((Date.now() - meta.loadedAt) / 1000),
+                accessCount: meta.accessCount,
+                isCurrent: trackIndex === this._playback.currentIndex
+            }))
+            .sort((a, b) => a.trackIndex - b.trackIndex);
+    }
+    
+    destroy() {
+        if (this._state.destroyed) {
+            this.debugLog('⚠️ Already destroyed', 'warning');
+            return;
+        }
+        
+        this.debugLog('🧹 Destroying AudioBufferManager...', 'info');
+        
+        // Cancel all active operations
+        this.cancelAllLoads();
+        
+        // Clear all intervals
+        this._resources.intervals.forEach(id => clearInterval(id));
+        this._resources.intervals.clear();
+        
+        // Revoke blob URLs
+        this._resources.blobUrls.forEach(url => {
+            try {
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                // Ignore revoke errors
+            }
+        });
+        this._resources.blobUrls.clear();
+        
+        // Clear all buffers
+        this.clearAllBuffers();
+        
+        // Null callbacks to break closure chains
+        Object.keys(this._callbacks).forEach(key => {
+            this._callbacks[key] = null;
+        });
+        
+        // Mark as destroyed
+        this._state.destroyed = true;
+        this._state.initialized = false;
+        
+        this.debugLog('✅ AudioBufferManager destroyed', 'success');
+    }
+    
+    // ========== INTERNAL OPERATIONS ==========
+    
+    async _performLoad(trackIndex, audioFile) {
         return new Promise((resolve, reject) => {
-            const loadState = { cancelled: false, reader: null };
-            this.resources.activeLoads.set(trackIndex, loadState);
-
+            const readerState = {
+                cancelled: false,
+                instance: null
+            };
+            
+            this._resources.activeReaders.set(trackIndex, readerState);
+            
             const reader = new FileReader();
-            loadState.reader = reader;
-
-            // Progress reporting — directly fixes the "missing progress updates" bug
+            readerState.instance = reader;
+            
             reader.onprogress = (e) => {
-                if (loadState.cancelled) return;
+                if (readerState.cancelled) return;
                 if (e.lengthComputable) {
-                    this.callbacks.onLoadProgress?.(trackIndex, audioFile.name, e.loaded, e.total);
+                    this._callbacks.onLoadProgress?.(trackIndex, audioFile.name, e.loaded, e.total);
                 }
             };
-
+            
             reader.onload = (e) => {
-                // CRITICAL: Null handlers immediately to release closure references
-                reader.onload    = null;
-                reader.onerror   = null;
-                reader.onprogress = null;
-                loadState.reader = null;
-                this.resources.activeLoads.delete(trackIndex);
-
-                if (loadState.cancelled) {
+                this._cleanupReader(trackIndex);
+                
+                if (readerState.cancelled || this._state.destroyed) {
                     reject(new Error(`Load cancelled: track ${trackIndex}`));
                     return;
                 }
-
+                
                 resolve(e.target.result);
             };
-
+            
             reader.onerror = () => {
-                // CRITICAL: Null handlers immediately
-                reader.onload    = null;
-                reader.onerror   = null;
-                reader.onprogress = null;
-                loadState.reader = null;
-                this.resources.activeLoads.delete(trackIndex);
-
-                const errMsg = `Failed to load audio buffer for track ${trackIndex}`;
-                this.debugLog(`❌ ${errMsg}`, 'error');
-                this.callbacks.onLoadError?.(trackIndex, audioFile.name, new Error(errMsg));
-                reject(new Error(errMsg));
+                this._cleanupReader(trackIndex);
+                reject(new Error(`Failed to load track ${trackIndex}`));
             };
-
+            
             reader.readAsArrayBuffer(audioFile);
         });
     }
-
-    // ─── PRELOADING ────────────────────────────────────────────────────────────
-
-    /**
-     * Preload upcoming tracks into cache.
-     * FIXED: Skips preloading entirely when shuffle is active since we
-     * cannot predict which track will play next.
-     *
-     * @param {number} currentIndex
-     */
-    async preloadUpcoming(currentIndex) {
-        if (this.state.destroyed) return;
-
-        this.currentTrackIndex = currentIndex;
-
-        // Shuffle-aware: preloading sequential tracks is wasteful when shuffled
-        if (this.isShuffled) {
-            this.debugLog('🔀 Shuffle active - skipping sequential preload', 'info');
-            return;
+    
+    _cleanupReader(trackIndex) {
+        const reader = this._resources.activeReaders.get(trackIndex);
+        if (!reader?.instance) return;
+        
+        // Null out all handlers to break circular references
+        reader.instance.onload = null;
+        reader.instance.onerror = null;
+        reader.instance.onprogress = null;
+        reader.instance = null;
+        
+        this._resources.activeReaders.delete(trackIndex);
+    }
+    
+    _storeBuffer(trackIndex, buffer, fileName) {
+        if (this._state.destroyed) {
+            throw new Error('Manager destroyed during storage');
         }
-
-        const tier         = this.config.deviceTier;
-        const preloadCount = this.config.preloadCount[tier];
-        const promises     = [];
-        const targetIndices = [];
-
-        for (let i = 1; i <= preloadCount; i++) {
-            const nextIndex = currentIndex + i;
-            if (nextIndex < this.playlist.length) {
-                const track = this.playlist[nextIndex];
-                if (!this.buffers.has(nextIndex) && !this.loadingPromises.has(nextIndex) && track.file) {
-                    targetIndices.push(nextIndex);
-                    promises.push(
-                        this.loadBuffer(nextIndex, track.file).catch(err => {
-                            // Preload failures are silent — they are best-effort
-                            this.debugLog(`⚠️ Preload failed for track ${nextIndex}: ${err.message}`, 'warning');
-                        })
-                    );
-                }
-            }
-        }
-
-        if (promises.length > 0) {
-            this.debugLog(`🔄 Preloading ${promises.length} upcoming track(s)...`, 'info');
-            await Promise.all(promises);
-            this.callbacks.onPreloadComplete?.(targetIndices);
+        
+        this._buffers.set(trackIndex, buffer);
+        this._metadata.set(trackIndex, {
+            size: buffer.byteLength,
+            loadedAt: Date.now(),
+            lastAccessed: Date.now(),
+            accessCount: 1,
+            fileName
+        });
+        
+        this._stats.totalLoaded++;
+        this._stats.memoryUsed += buffer.byteLength;
+        
+        this._enforceMemoryLimits();
+    }
+    
+    _touchMetadata(trackIndex) {
+        const meta = this._metadata.get(trackIndex);
+        if (meta) {
+            meta.lastAccessed = Date.now();
+            meta.accessCount++;
         }
     }
-
-    /**
-     * Get buffer for a track, loading it if not cached.
-     * @param {number} trackIndex
-     * @returns {Promise<ArrayBuffer>}
-     */
-    async getBuffer(trackIndex) {
-        if (this.state.destroyed) throw new Error('AudioBufferManager has been destroyed');
-
-        if (this.buffers.has(trackIndex)) {
-            this.updateAccessTime(trackIndex);
-            return this.buffers.get(trackIndex);
-        }
-
-        const track = this.playlist[trackIndex];
-        if (!track || !track.file) {
-            throw new Error(`Track ${trackIndex} not found or has no file`);
-        }
-
-        return this.loadBuffer(trackIndex, track.file);
-    }
-
-    // ─── CANCELLATION ──────────────────────────────────────────────────────────
-
-    /**
-     * Cancel an in-flight load for a specific track.
-     * The FileReader is aborted (best-effort) and the promise will reject.
-     */
-    cancelLoad(trackIndex) {
-        const loadState = this.resources.activeLoads.get(trackIndex);
-        if (!loadState) return;
-
-        loadState.cancelled = true;
-
-        if (loadState.reader && loadState.reader.readyState === FileReader.LOADING) {
-            try {
-                loadState.reader.abort();
-            } catch (e) {
-                // FileReader.abort() can throw in some edge cases — ignore
-            }
-        }
-        loadState.reader = null;
-        this.resources.activeLoads.delete(trackIndex);
-        this.loadingPromises.delete(trackIndex);
-
-        this.debugLog(`🚫 Cancelled load for track ${trackIndex}`, 'info');
-    }
-
-    /**
-     * Cancel all in-flight loads.
-     */
-    cancelAllLoads() {
-        const indices = Array.from(this.resources.activeLoads.keys());
-        indices.forEach(i => this.cancelLoad(i));
-        this.debugLog(`🚫 Cancelled ${indices.length} active load(s)`, 'info');
-    }
-
-    // ─── BUFFER MANAGEMENT ─────────────────────────────────────────────────────
-
-    /**
-     * Clear a single buffer and release its memory.
-     */
-    clearBuffer(trackIndex) {
-        if (!this.buffers.has(trackIndex)) return;
-
-        const metadata = this.bufferMetadata.get(trackIndex);
-        if (metadata) {
-            this.stats.memoryUsed -= metadata.size;
-            this.stats.totalEvicted++;
-        }
-
-        // Explicitly null the reference so the GC can collect the ArrayBuffer
-        this.buffers.set(trackIndex, null);
-        this.buffers.delete(trackIndex);
-        this.bufferMetadata.delete(trackIndex);
-    }
-
-    /**
-     * Clear all buffers and release all ArrayBuffer memory.
-     */
-    clearAllBuffers() {
-        // Null each buffer reference before clearing the map
-        for (const [, buffer] of this.buffers) {
-            // Overwrite with null — helps GC if anything else held a ref to the map value
-            void buffer;
-        }
-
-        this.buffers.clear();
-        this.bufferMetadata.clear();
-        this.loadingPromises.clear();
-        this.stats.memoryUsed = 0;
-
-        this.debugLog('🧹 All audio buffers cleared', 'info');
-    }
-
-    // ─── MEMORY MANAGEMENT ─────────────────────────────────────────────────────
-
-    updateAccessTime(trackIndex) {
-        const metadata = this.bufferMetadata.get(trackIndex);
-        if (metadata) {
-            metadata.lastAccessed = Date.now();
-            metadata.accessCount++;
+    
+    _enforceMemoryLimits() {
+        if (this._stats.memoryUsed > this._config.maxMemory || 
+            this._buffers.size > this._config.maxTracks) {
+            this._evictLRU();
         }
     }
-
-    enforceMemoryLimit() {
-        const tier      = this.config.deviceTier;
-        const maxSize   = this.config.bufferSize[tier];
-        const maxCached = this.config.maxCachedTracks[tier];
-
-        if (this.stats.memoryUsed > maxSize || this.buffers.size > maxCached) {
-            this.evictLeastRecentlyUsed();
-        }
-    }
-
-    /**
-     * FIXED: The original had a `const tier` re-declaration inside the loop
-     * (which shadows the outer const and is a SyntaxError in strict mode).
-     * Moved the limit checks to use the outer-scoped variables.
-     */
-    evictLeastRecentlyUsed() {
-        const tier      = this.config.deviceTier;
-        const maxSize   = this.config.bufferSize[tier];
-        const maxCached = this.config.maxCachedTracks[tier];
-        const preloadCount = this.config.preloadCount[tier];
-
-        const sortedBuffers = Array.from(this.bufferMetadata.entries())
+    
+    _evictLRU() {
+        const protected = this._getProtectedIndices();
+        
+        const candidates = Array.from(this._metadata.entries())
+            .filter(([idx]) => !protected.has(idx))
             .sort((a, b) => a[1].lastAccessed - b[1].lastAccessed);
-
-        // Protect current track and its preload window
-        const protectedIndices = new Set();
-        protectedIndices.add(this.currentTrackIndex);
-        for (let i = 1; i <= preloadCount; i++) {
-            protectedIndices.add(this.currentTrackIndex + i);
-        }
-
-        for (const [trackIndex] of sortedBuffers) {
-            if (protectedIndices.has(trackIndex)) continue;
-
+        
+        for (const [trackIndex] of candidates) {
             this.clearBuffer(trackIndex);
-
-            // FIXED: Reuse the outer-scoped tier/maxSize/maxCached (no re-declaration)
-            if (this.stats.memoryUsed <= maxSize && this.buffers.size <= maxCached) {
+            
+            if (this._stats.memoryUsed <= this._config.maxMemory && 
+                this._buffers.size <= this._config.maxTracks) {
                 break;
             }
         }
     }
-
-    /**
-     * Clean up buffers that haven't been accessed in over 5 minutes.
-     * Called by PerformanceManager during periodic cleanup.
-     */
-    cleanupOldBuffers() {
-        if (this.state.destroyed) return;
-
-        const now    = Date.now();
+    
+    _evictStaleBuffers() {
+        if (this._state.destroyed) return;
+        
         const maxAge = 5 * 60 * 1000; // 5 minutes
-        const tier   = this.config.deviceTier;
-        const preloadCount = this.config.preloadCount[tier];
-        let cleaned  = 0;
-
-        for (const [trackIndex, metadata] of this.bufferMetadata.entries()) {
-            if (trackIndex === this.currentTrackIndex) continue;
-
-            // Protect preload window (only meaningful when not shuffled)
-            if (!this.isShuffled) {
-                const inPreloadWindow = trackIndex > this.currentTrackIndex &&
-                                        trackIndex <= this.currentTrackIndex + preloadCount;
-                if (inPreloadWindow) continue;
-            }
-
-            if (now - metadata.lastAccessed > maxAge) {
+        const now = Date.now();
+        const protected = this._getProtectedIndices();
+        
+        let evicted = 0;
+        
+        for (const [trackIndex, meta] of this._metadata.entries()) {
+            if (protected.has(trackIndex)) continue;
+            
+            if (now - meta.lastAccessed > maxAge) {
                 this.clearBuffer(trackIndex);
-                cleaned++;
+                evicted++;
             }
         }
-
-        if (cleaned > 0) {
-            this.debugLog(`🧹 Cleaned up ${cleaned} stale buffer(s)`, 'info');
+        
+        if (evicted > 0) {
+            this.debugLog(`🧹 Evicted ${evicted} stale buffer(s)`, 'info');
         }
     }
-
-    // ─── STATISTICS ────────────────────────────────────────────────────────────
-
-    getStats() {
-        const tier        = this.config.deviceTier;
-        const memUsedMB   = (this.stats.memoryUsed / 1048576).toFixed(2);
-        const memLimitMB  = (this.config.bufferSize[tier] / 1048576).toFixed(2);
-        const totalReqs   = this.stats.cacheHits + this.stats.cacheMisses;
-        const hitRate     = totalReqs > 0
-            ? ((this.stats.cacheHits / totalReqs) * 100).toFixed(1)
-            : 0;
-
-        return {
-            ...this.stats,
-            memoryUsedMB:  `${memUsedMB} MB`,
-            memoryLimitMB: `${memLimitMB} MB`,
-            cachedTracks:  this.buffers.size,
-            activeLoads:   this.resources.activeLoads.size,
-            hitRate:       `${hitRate}%`,
-            deviceTier:    tier,
-            isShuffled:    this.isShuffled,
-            initialized:   this.state.initialized,
-            destroyed:     this.state.destroyed
-        };
-    }
-
-    getBufferInfo() {
-        return Array.from(this.bufferMetadata.entries())
-            .map(([trackIndex, metadata]) => ({
-                trackIndex,
-                fileName:    metadata.fileName || `track_${trackIndex}`,
-                sizeMB:      (metadata.size / 1048576).toFixed(2),
-                ageSeconds:  Math.round((Date.now() - metadata.loadedAt) / 1000),
-                accessCount: metadata.accessCount,
-                isCurrent:   trackIndex === this.currentTrackIndex
-            }))
-            .sort((a, b) => a.trackIndex - b.trackIndex);
-    }
-
-    // ─── DESTROY ───────────────────────────────────────────────────────────────
-
-    /**
-     * CRITICAL NEW: Complete teardown of all resources.
-     * Called by MusicPlayerApp.destroy() and triggered by script.js on unload.
-     *
-     * Sequence:
-     *  1. Cancel all in-flight FileReader loads
-     *  2. Clear all tracked intervals
-     *  3. Release all ArrayBuffers
-     *  4. Mark as destroyed so any stray async callbacks are ignored
-     */
-    destroy() {
-        if (this.state.destroyed) {
-            this.debugLog('⚠️ AudioBufferManager already destroyed', 'warning');
-            return;
+    
+    _getProtectedIndices() {
+        const protected = new Set();
+        protected.add(this._playback.currentIndex);
+        
+        // Protect preload window (only when not shuffled)
+        if (!this._playback.isShuffled) {
+            for (let i = 1; i <= this._config.preloadCount; i++) {
+                protected.add(this._playback.currentIndex + i);
+            }
         }
-
-        this.debugLog('🧹 Destroying AudioBufferManager...', 'info');
-
-        // 1. Cancel every in-flight FileReader
-        this.cancelAllLoads();
-
-        // 2. Clear all tracked intervals
-        this.resources.intervals.forEach(id => clearInterval(id));
-        this.resources.intervals.clear();
-
-        // 3. Release ArrayBuffers and clear all maps
-        this.clearAllBuffers();
-
-        // 4. Clear any pending dedup promises
-        this.loadingPromises.clear();
-
-        // 5. Null callback references (break potential closure cycles)
-        this.callbacks = {
-            onLoadStart:       null,
-            onLoadProgress:    null,
-            onLoadComplete:    null,
-            onLoadError:       null,
-            onMemoryWarning:   null,
-            onPreloadComplete: null
-        };
-
-        this.state.destroyed    = true;
-        this.state.initialized  = false;
-
-        this.debugLog('✅ AudioBufferManager destroyed successfully', 'success');
+        
+        return protected;
+    }
+    
+    _calculatePreloadTargets(currentIndex) {
+        const targets = [];
+        const maxIndex = this._playback.playlist.length - 1;
+        
+        for (let i = 1; i <= this._config.preloadCount; i++) {
+            const nextIndex = currentIndex + i;
+            
+            if (nextIndex > maxIndex) break;
+            
+            const track = this._playback.playlist[nextIndex];
+            if (!track?.file) continue;
+            
+            // Skip if already cached or loading
+            if (this._buffers.has(nextIndex) || this._pendingLoads.has(nextIndex)) {
+                continue;
+            }
+            
+            targets.push(nextIndex);
+        }
+        
+        return targets;
+    }
+    
+    _ensureNotDestroyed() {
+        if (this._state.destroyed) {
+            throw new Error('AudioBufferManager has been destroyed');
+        }
     }
 }
 
-// Export for Node / bundler environments
+// Export for module environments
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = AudioBufferManager;
 }
 
-console.log('✅ AudioBufferManager v2.0 loaded - Memory Leak Fixed');
+console.log('✅ AudioBufferManager v3.0 loaded - Clean & memory-safe');
