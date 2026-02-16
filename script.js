@@ -1403,23 +1403,38 @@ case 'arrowleft':
     playPrevious() {
     if (this.state.playlist.length === 0) return;
     
-    let prev;
     if (this.state.isShuffled && this.state.shuffledPlaylist.length > 0) {
         // Find current position in shuffled playlist
         const currentPos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
+        
+        // If current track not found in shuffle, just go back normally
+        if (currentPos === -1) {
+            if (this.state.currentTrackIndex > 0) {
+                this.loadTrack(this.state.currentTrackIndex - 1);
+            } else if (this.state.loopMode === 'all') {
+                this.loadTrack(this.state.playlist.length - 1);
+            }
+            return;
+        }
+        
         const prevPos = currentPos - 1;
         
         if (prevPos < 0) {
             if (this.state.loopMode === 'all') {
-                prev = this.state.shuffledPlaylist[this.state.shuffledPlaylist.length - 1];
-            } else {
-                return;
+                const prev = this.state.shuffledPlaylist[this.state.shuffledPlaylist.length - 1];
+                if (prev !== undefined && prev >= 0 && prev < this.state.playlist.length) {
+                    this.loadTrack(prev);
+                }
             }
-        } else {
-            prev = this.state.shuffledPlaylist[prevPos];
+            return;
         }
-        this.loadTrack(prev);
+        
+        const prev = this.state.shuffledPlaylist[prevPos];
+        if (prev !== undefined && prev >= 0 && prev < this.state.playlist.length) {
+            this.loadTrack(prev);
+        }
     } else {
+        // Normal (non-shuffled) mode
         if (this.state.currentTrackIndex > 0) {
             this.loadTrack(this.state.currentTrackIndex - 1);
         } else if (this.state.loopMode === 'all') {
