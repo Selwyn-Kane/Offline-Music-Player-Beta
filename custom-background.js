@@ -147,19 +147,27 @@ class CustomBackgroundManager {
     }
     
     applyBackground(imageData) {
-        document.body.style.backgroundImage = `url(${imageData})`;
-        document.body.classList.add('custom-bg');
-        this.currentBackground = imageData;
-    }
+    document.body.style.backgroundImage = `url(${imageData})`;
+    document.body.style.backgroundSize = 'cover';
+    document.body.style.backgroundPosition = 'center';
+    document.body.style.backgroundRepeat = 'no-repeat';
+    document.body.style.backgroundAttachment = 'fixed';
+    document.body.classList.add('custom-bg');
+    this.currentBackground = imageData;
+}
     
     resetBackground() {
-        document.body.style.backgroundImage = '';
-        document.body.classList.remove('custom-bg');
-        this.currentBackground = null;
-        localStorage.removeItem('customBackground');
-        this.hidePreview();
-        this.debugLog('Background reset to default', 'info');
-    }
+    document.body.style.backgroundImage = '';
+    document.body.style.backgroundSize = '';
+    document.body.style.backgroundPosition = '';
+    document.body.style.backgroundRepeat = '';
+    document.body.style.backgroundAttachment = '';
+    document.body.classList.remove('custom-bg');
+    this.currentBackground = null;
+    localStorage.removeItem('customBackground');
+    this.hidePreview();
+    this.debugLog('Background reset to default', 'info');
+}
     
     saveBackground(imageData) {
         try {
