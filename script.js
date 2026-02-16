@@ -1263,11 +1263,27 @@ case 'arrowleft':
     }
 
     _playFromURL(track) {
-        this.elements.player.src = track.audioURL;
-        this.elements.player.load();
-        this.elements.player.play()
-            .catch(e => this.debugLog(`Playback failed: ${e.message}`, 'warning'));
+    // If track has a file object, create a fresh blob URL from it
+    // This handles cases where the original audioURL blob was revoked
+    if (track.file) {
+        // Revoke old URL if it's a blob
+        if (track.audioURL?.startsWith('blob:')) {
+            try {
+                URL.revokeObjectURL(track.audioURL);
+            } catch (_) {}
+        }
+        
+        // Create fresh blob URL from file
+        const newURL = URL.createObjectURL(track.file);
+        track.audioURL = newURL;
+        this.resources.blobURLs.add(newURL);
     }
+    
+    this.elements.player.src = track.audioURL;
+    this.elements.player.load();
+    this.elements.player.play()
+        .catch(e => this.debugLog(`Playback failed: ${e.message}`, 'warning'));
+}
 
     // ── Resource management ───────────────────────────────────────────────────
 
