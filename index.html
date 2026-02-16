@@ -227,11 +227,8 @@
             <div class="lyric-line">Lyrics will appear here when a track is loaded.</div>
         </div>
         
-        <!-- Visualizer -->
-        <div id="player-wrapper">
-            <canvas id="visualizer"></canvas>
-            <video id="audio-player" preload="metadata" crossorigin="anonymous"></video>
-        </div>
+      <!-- Audio Player (moved out to eliminate gap) -->
+<video id="audio-player" preload="metadata" crossorigin="anonymous" style="display: none;"></video>
         
         <!-- Playlist -->
         <div id="playlist-container">
@@ -441,31 +438,6 @@
         });
     });
     
-    // Play/pause button functionality
-    const playPauseButton = document.getElementById('play-pause-button');
-    const audioPlayer = document.getElementById('audio-player');
-    
-    if (playPauseButton && audioPlayer) {
-        playPauseButton.addEventListener('click', () => {
-            if (audioPlayer.paused) {
-                audioPlayer.play();
-            } else {
-                audioPlayer.pause();
-            }
-        });
-        
-        audioPlayer.addEventListener('play', () => {
-            playPauseButton.querySelector('.control-icon').textContent = '⏸️';
-        });
-        
-        audioPlayer.addEventListener('pause', () => {
-            playPauseButton.querySelector('.control-icon').textContent = '▶️';
-        });
-        
-        audioPlayer.addEventListener('ended', () => {
-            playPauseButton.querySelector('.control-icon').textContent = '▶️';
-        });
-    }
-    </script>
+        </script>
 </body>
 </html>
