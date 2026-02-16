@@ -359,6 +359,12 @@ class MusicPlayerApp {
                 this.debugLog('✅ FileLoadingManager initialized', 'success');
             }
 
+           if (typeof CustomBackgroundManager !== 'undefined') {
+    this.managers.customBackground = new CustomBackgroundManager(log);
+    window.customBackground = this.managers.customBackground;
+    this.debugLog('✅ CustomBackgroundManager initialized', 'success');
+}
+
             if (typeof EnhancedPlaylistRenderer !== 'undefined') {
                 this.managers.playlistRenderer = new EnhancedPlaylistRenderer(log);
                 this.managers.playlistRenderer.init({
@@ -748,8 +754,8 @@ class MusicPlayerApp {
         if (!btn) return;
 
         const handler = () => {
-            if (window.customBackground?.openPicker) {
-                window.customBackground.openPicker();
+            if (this.managers.customBackground) {
+    this.managers.customBackground.showModal();
             } else {
                 this.managers.ui?.showToast('Background picker not available', 'error');
             }
