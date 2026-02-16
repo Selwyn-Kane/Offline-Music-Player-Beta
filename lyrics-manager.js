@@ -242,39 +242,50 @@ class LyricsManager {
     // ============================================
     
     setDominantColor(color) {
-        if (!color) return;
+    if (!color) {
+        // Reset to defaults
+        this.colors.primary = { r: 220, g: 53, b: 69 };
+        this.colors.secondary = { r: 255, g: 119, b: 136 };
+        this.colors.background = { r: 10, g: 10, b: 10 };
+        this.colors.accent = { r: 220, g: 53, b: 69 };
         
-        this.colors.primary = color;
-        
-        // Generate vibrant palette
-        const hsl = this.rgbToHsl(color.r, color.g, color.b);
-        
-        this.colors.secondary = this.hslToRgb(
-            hsl.h,
-            Math.min(100, hsl.s * 1.2),
-            Math.min(90, hsl.l * 1.5)
-        );
-        
-        this.colors.accent = this.hslToRgb(
-            hsl.h,
-            100,
-            Math.max(45, Math.min(65, hsl.l))
-        );
-        
-        // Fixed: Use vibrant background colors instead of washing them out
-        this.colors.background = this.hslToRgb(
-            hsl.h,
-            Math.max(30, hsl.s * 0.6), // More saturation
-            18  // Much lighter than before (was 8)
-        );
-        
-        // Update fullscreen background
         if (this.state.fullscreen) {
             this.updateFullscreenBackground();
         }
-        
-        this.debugLog(`🎨 Color updated: RGB(${color.r}, ${color.g}, ${color.b})`, 'info');
+        return;
     }
+    
+    this.colors.primary = color;
+    
+    // Generate vibrant palette
+    const hsl = this.rgbToHsl(color.r, color.g, color.b);
+    
+    this.colors.secondary = this.hslToRgb(
+        hsl.h,
+        Math.min(100, hsl.s * 1.2),
+        Math.min(90, hsl.l * 1.5)
+    );
+    
+    this.colors.accent = this.hslToRgb(
+        hsl.h,
+        100,
+        Math.max(45, Math.min(65, hsl.l))
+    );
+    
+    // Create vibrant background color
+    this.colors.background = this.hslToRgb(
+        hsl.h,
+        Math.max(30, hsl.s * 0.6),
+        18
+    );
+    
+    // Update fullscreen background immediately if it's active
+    if (this.state.fullscreen && this.elements.fullscreenContainer) {
+        this.updateFullscreenBackground();
+    }
+    
+    this.debugLog(`🎨 Lyrics color updated: RGB(${color.r}, ${color.g}, ${color.b})`, 'info');
+}
     
     rgbToHsl(r, g, b) {
         r /= 255; g /= 255; b /= 255;
@@ -666,22 +677,26 @@ class LyricsManager {
     }
     
     updateFullscreenBackground() {
-        if (!this.elements.fullscreenContainer) return;
-        
-        const bg = this.colors.background;
-        const primary = this.colors.primary;
-        const secondary = this.colors.secondary;
-        
-        // Create vibrant gradient background
-        this.elements.fullscreenContainer.style.background = `
-            radial-gradient(
-                ellipse at top left,
-                rgba(${primary.r}, ${primary.g}, ${primary.b}, 0.3) 0%,
-                rgba(${bg.r}, ${bg.g}, ${bg.b}, 1) 50%,
-                rgba(${secondary.r}, ${secondary.g}, ${secondary.b}, 0.2) 100%
-            )
-        `;
-    }
+    if (!this.elements.fullscreenContainer) return;
+    
+    const bg = this.colors.background;
+    const primary = this.colors.primary;
+    const secondary = this.colors.secondary;
+    
+    // Create vibrant gradient background using album art colors
+    const gradient = `
+        radial-gradient(
+            ellipse at center,
+            rgba(${primary.r}, ${primary.g}, ${primary.b}, 0.25) 0%,
+            rgba(${bg.r}, ${bg.g}, ${bg.b}, 0.95) 40%,
+            rgba(${secondary.r}, ${secondary.g}, ${secondary.b}, 0.15) 70%,
+            rgba(0, 0, 0, 1) 100%
+        )
+    `;
+    
+    this.elements.fullscreenContainer.style.background = gradient;
+    this.elements.fullscreenContainer.style.transition = 'background 0.8s ease';
+}
     
     // ============================================
     // DISPLAY MODES & FEATURES
