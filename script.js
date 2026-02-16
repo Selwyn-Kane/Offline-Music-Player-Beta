@@ -182,12 +182,12 @@ class MusicPlayerApp {
 
             // ── Sections controlled by view-mode ─────────────────────────────
             // compact + full
-            sectionPlaylist:   $('playlist-container'),
-            sectionVolume:     $('volume-container'),
-            // full only
-            sectionLyrics:     $('lyrics-container'),
-            sectionEQ:         $('eq-container'),
-            sectionDropZone:   $('drop-zone'),          // alias for clarity
+           sectionPlaylist:   $('playlist-container'),
+           sectionVolume:     $('volume-control'),
+           // full only
+           sectionLyrics:     $('lyrics-display'),
+           sectionEQ:         $('equalizer-control'),
+           sectionDropZone:   $('drop-zone'),          // alias for clarity
         };
     }
 
