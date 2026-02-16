@@ -599,16 +599,6 @@
     position: relative;
 }
 
-#visualizer {
-    width: 100%;
-    height: 120px;
-    background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
-    border-radius: 10px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-    border: 1px solid #333;
-    display: block;
-}
-
 video { 
     width: 100%;
     background-color: #111;
@@ -962,45 +952,6 @@ video {
 }
 /* ========== END COMPACT MODE CSS ========== */
         
-/* ========== PICTURE-IN-PICTURE CSS ========== */
-#pip-toggle:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-}
-
-/* Hide controls when in PiP mode */
-video::-webkit-media-controls {
-    display: none !important;
-}
-
-video::--webkit-media-controls-enclosure {
-    display: none !important;
-}
-
-/* PiP indicator */
-.pip-active #pip-toggle {
-    background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
-    box-shadow: 0 4px 15px rgba(40, 167, 69, 0.4);
-}
-        /* Add this to your CSS section */
-#pip-video {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 1px;
-    height: 1px;
-    opacity: 0.01;
-    pointer-events: none;
-    z-index: -1;
-}
-
-/* Ensure the main video element is properly styled for PiP */
-#audio-player {
-    object-fit: contain;
-    background: #000;
-}
-/* ========== END PICTURE-IN-PICTURE CSS ========== */
-
         /* ========== STICKY MINI PLAYER CSS ========== */
 body.sticky-mini {
     padding-bottom: 180px; /* Make room for sticky player */
@@ -1140,188 +1091,6 @@ body.sticky-mini {
 }
 /* ========== END STICKY MINI PLAYER CSS ========== */
 
-/* ========== FULLSCREEN VISUALIZER CSS ========== */
-#fullscreen-visualizer {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: #000;
-    z-index: 10000;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    transition: opacity 0.3s ease;
-}
-
-#fullscreen-visualizer.show {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    /* Force fullscreen on mobile */
-    height: 100dvh; /* Dynamic viewport height for mobile */
-}
-
-/* Mobile fullscreen override */
-@media (max-width: 768px) {
-    #fullscreen-visualizer:not(.fullscreen-viz-hidden) {
-        position: fixed;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        height: 100dvh !important; /* Mobile browsers */
-        overflow: hidden;
-    }
-}
-
-#fullscreen-visualizer.fullscreen-viz-hidden {
-    display: none;
-    opacity: 0;
-    pointer-events: none;
-}
-
-#fullscreen-viz-canvas {
-    width: 100%;
-    height: 100%;
-    position: absolute;
-    top: 0;
-    left: 0;
-}
-
-.fullscreen-viz-controls {
-    position: absolute;
-    top: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: 15px;
-    z-index: 10001;
-    background: rgba(0, 0, 0, 0.7);
-    padding: 15px 25px;
-    border-radius: 50px;
-    backdrop-filter: blur(10px);
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-#viz-force-hide-btn {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-    background: rgba(220, 53, 69, 0.8);
-    border: none;
-    color: white;
-    width: 50px;
-    height: 50px;
-    border-radius: 50%;
-    cursor: pointer;
-    font-size: 20px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.3s ease;
-    z-index: 10002;
-}
-
-#viz-force-hide-btn:hover {
-    background: rgba(220, 53, 69, 1);
-    transform: scale(1.1);
-}
-
-.controls-hidden .fullscreen-viz-controls,
-.controls-hidden .fullscreen-viz-info,
-.controls-hidden #viz-force-hide-btn {
-    opacity: 0 !important;
-    pointer-events: none !important;
-}
-
-#fullscreen-visualizer:hover .fullscreen-viz-controls {
-    opacity: 1;
-}
-
-.viz-control-btn {
-    padding: 10px 20px;
-    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    transition: all 0.3s ease;
-    box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
-}
-
-.viz-control-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(220, 53, 69, 0.5);
-}
-
-.fullscreen-viz-info {
-    position: absolute;
-    bottom: 50px;
-    left: 50%;
-    transform: translateX(-50%);
-    text-align: center;
-    z-index: 10001;
-    color: white;
-    text-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
-    background: rgba(0, 0, 0, 0.5);
-    padding: 20px 40px;
-    border-radius: 15px;
-    backdrop-filter: blur(10px);
-    min-width: 400px;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-#fullscreen-visualizer:hover .fullscreen-viz-info {
-    opacity: 1;
-}
-
-.fullscreen-viz-title {
-    font-size: 2em;
-    font-weight: 700;
-    margin-bottom: 10px;
-    color: #fff;
-}
-
-.fullscreen-viz-artist {
-    font-size: 1.3em;
-    color: #dc3545;
-    margin-bottom: 15px;
-}
-
-.fullscreen-viz-time {
-    font-size: 1.1em;
-    color: #aaa;
-}
-
-/* Button active state */
-#fullscreen-viz-toggle.active {
-    background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
-    box-shadow: 0 4px 15px rgba(40, 167, 69, 0.4);
-}
-
-/* Auto-hide controls and info after 3 seconds of no mouse movement */
-#fullscreen-visualizer.auto-hide .fullscreen-viz-controls,
-#fullscreen-visualizer.auto-hide .fullscreen-viz-info {
-    opacity: 0;
-    pointer-events: none;
-}
-
-#fullscreen-visualizer.auto-hide:hover .fullscreen-viz-controls,
-#fullscreen-visualizer.auto-hide:hover .fullscreen-viz-info {
-    opacity: 1;
-    pointer-events: all;
-}
-/* ========== END FULLSCREEN VISUALIZER CSS ========== */
-
 /* ========== TABLET & LANDSCAPE FIXES ========== */
 @media (min-width: 768px) and (max-width: 1024px) {
     /* Tablet-specific adjustments */
@@ -1403,11 +1172,6 @@ body.sticky-mini {
         width: 90% !important;
         margin-bottom: 5px !important;
     }
-
-    #visualizer {
-        height: 60px !important;
-        width: 90% !important;
-    }
     
     .lyric-line {
         font-size: 1.1em !important;
@@ -1458,14 +1222,6 @@ body.sticky-mini {
     }
 }
 
-/* High DPI / Retina displays */
-@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
-    #visualizer,
-    #fullscreen-viz-canvas {
-        image-rendering: -webkit-optimize-contrast;
-        image-rendering: crisp-edges;
-    }
-}
 /* ========== END TABLET & LANDSCAPE FIXES ========== */
 
 .eq-preset-dropdown {
