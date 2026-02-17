@@ -1,1187 +1,660 @@
 /* ============================================
-   Mobile-Optimized File Loading Manager v3.0
-   
-   Key Optimizations:
-   - Progressive loading (show tracks immediately, load details later)
-   - IndexedDB persistent cache with compression
-   - Web Worker integration for heavy tasks
-   - Mobile-specific concurrency and memory limits
-   - Lazy metadata extraction on-demand
-   - Background processing with requestIdleCallback
-   - Optimized image handling for mobile
-   - Smart prefetching and prioritization
-   - Memory-efficient streaming
+   FILE LOADING MANAGER v3.1
+   Progressive, mobile-aware file loading.
    ============================================ */
 
 class EnhancedFileLoadingManager {
-    constructor(debugLog, options = {}) {
-        this.debugLog = debugLog;
-        
-        // Detect mobile for optimizations
-        this.isMobile = this._detectMobile();
-        this.isLowMemory = this._detectLowMemory();
-        
-        // Dependencies
-        this.metadataParser = null;
-        this.vttParser = null;
-        this.analysisParser = null;
-        this.customMetadataStore = null;
-        this.analyzer = null;
-        this.workerManager = null;
-        this.imageOptimizer = null;
-        
-        // Mobile-optimized configuration
+
+    constructor(debugLog = console.log, options = {}) {
+        this._log = debugLog;
+
+        this.isMobile    = this._detectMobile();
+        this.isLowMemory = (navigator.deviceMemory ?? 4) < 4;
+
         this.config = {
-            supportedAudioFormats: options.supportedAudioFormats || [
-                'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma', 'opus', 'webm'
+            supportedAudioFormats: options.supportedAudioFormats ?? [
+                'mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'wma', 'opus', 'webm',
             ],
-            // Mobile: reduce concurrency, desktop: allow more
-            maxConcurrent: this.isMobile ? 2 : (options.maxConcurrent || 3),
-            retryAttempts: options.retryAttempts || 2,
-            retryDelay: options.retryDelay || 1000,
-            fuzzyMatchThreshold: options.fuzzyMatchThreshold || 0.8,
-            // Mobile: smaller chunks
-            chunkSize: this.isMobile ? 3 : (options.chunkSize || 5),
-            enableCaching: false, // Force disabled as per user request
-            maxCacheAge: options.maxCacheAge || 7 * 24 * 60 * 60 * 1000, // 7 days
-            // Progressive loading
-            progressiveMode: this.isMobile ? true : (options.progressiveMode || false),
-            // Background processing
-            useIdleCallback: this.isMobile ? true : (options.useIdleCallback !== false),
-            // Mobile memory limits
-            maxMemoryMB: this.isMobile ? 50 : 200,
-            // Lazy metadata extraction
-            lazyMetadata: this.isMobile ? true : (options.lazyMetadata || false)
+            // Mobile: lower concurrency to avoid saturating the main thread
+            maxConcurrent:       this.isMobile ? 2 : (options.maxConcurrent ?? 3),
+            retryAttempts:       options.retryAttempts ?? 2,
+            retryDelayMs:        options.retryDelay    ?? 1000,
+            fuzzyMatchThreshold: options.fuzzyMatchThreshold ?? 0.8,
+            chunkSize:           this.isMobile ? 3 : (options.chunkSize ?? 5),
+            // Progressive mode: return a minimal playlist immediately, enrich in background
+            progressiveMode:     options.progressiveMode ?? this.isMobile,
+            useIdleCallback:     options.useIdleCallback ?? true,
         };
-        
-        // State management
+
+        // Dependencies — set by init()
+        this.metadataParser      = null;
+        this.vttParser           = null;
+        this.analysisParser      = null;
+        this.customMetadataStore = null;
+        this.analyzer            = null;
+        this.workerManager       = null;
+        this.imageOptimizer      = null;
+
         this.state = {
-            isLoading: false,
-            isPaused: false,
-            currentOperation: null,
+            isLoading:      false,
             processedFiles: 0,
-            totalFiles: 0,
-            errors: [],
-            warnings: [],
-            memoryUsage: 0
+            totalFiles:     0,
+            errors:         [],
+            warnings:       [],
         };
-        
-        // Callbacks
+
         this.callbacks = {
-            onLoadStart: null,
-            onLoadProgress: null,
-            onLoadComplete: null,
-            onLoadError: null,
-            onFileProcessed: null,
-            onChunkComplete: null,
-            onProgressiveUpdate: null
+            onLoadStart:         null,
+            onLoadProgress:      null,
+            onLoadComplete:      null,
+            onLoadError:         null,
+            onFileProcessed:     null,
+            onChunkComplete:     null,
+            onProgressiveUpdate: null,
         };
-        
-        // In-memory cache (small, for current session)
-        this.memoryCache = new Map();
-        
-        // IndexedDB cache (persistent, larger)
-        this.dbCache = null;
-        this.initializeDB();
-        
-        // Background task queue
-        this.backgroundQueue = [];
-        this.isProcessingBackground = false;
-        
-        // Prefetch queue
-        this.prefetchQueue = [];
-        
-        this.debugLog(`📱 Mobile-optimized loader: ${this.isMobile ? 'MOBILE' : 'DESKTOP'} mode`, 'info');
+
+        this._isProcessingBackground = false;
+
+        this._log(`📁 FileLoadingManager v3.1 (${this.isMobile ? 'mobile' : 'desktop'})`, 'info');
     }
-    
-    // ========== MOBILE DETECTION ==========
-    
+
+    // ─── Detection ────────────────────────────────────────────────────────────
+
     _detectMobile() {
-        const ua = navigator.userAgent.toLowerCase();
-        const isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua);
-        const isSmallScreen = window.innerWidth <= 768;
-        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-        
-        return isMobile || (isSmallScreen && isTouchDevice);
+        const ua      = navigator.userAgent.toLowerCase();
+        const mobile  = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua);
+        const small   = window.innerWidth <= 768;
+        const touch   = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        return mobile || (small && touch);
     }
-    
-    _detectLowMemory() {
-        // Check if device has limited memory
-        if (navigator.deviceMemory) {
-            return navigator.deviceMemory < 4; // Less than 4GB
-        }
-        return this.isMobile; // Assume mobile is low memory
+
+    // ─── Initialisation ───────────────────────────────────────────────────────
+
+    init(deps) {
+        this.metadataParser      = deps.metadataParser;
+        this.vttParser           = deps.vttParser;
+        this.analysisParser      = deps.analysisParser;
+        this.customMetadataStore = deps.customMetadataStore;
+        this.analyzer            = deps.analyzer;
+        this.workerManager       = deps.workerManager  ?? window.workerManager;
+        this.imageOptimizer      = deps.imageOptimizer ?? window.imageOptimizer;
+        this._log('✅ FileLoadingManager initialized', 'success');
     }
-    
-    // ========== INDEXEDDB CACHE ==========
-    
-    async initializeDB() {
-        try {
-            this.dbCache = await this._openDB('MusicPlayerCache', 1);
-            
-            // Clean old entries on startup
-            await this._cleanExpiredCache();
-            
-            this.debugLog('💾 IndexedDB cache initialized', 'success');
-        } catch (err) {
-            this.debugLog(`⚠️ IndexedDB unavailable: ${err.message}`, 'warning');
-            this.dbCache = null;
-        }
-    }
-    
-    _openDB(name, version) {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open(name, version);
-            
-            request.onerror = () => reject(request.error);
-            request.onsuccess = () => resolve(request.result);
-            
-            request.onupgradeneeded = (event) => {
-                const db = event.target.result;
-                
-                if (!db.objectStoreNames.contains('fileCache')) {
-                    const store = db.createObjectStore('fileCache', { keyPath: 'id' });
-                    store.createIndex('timestamp', 'timestamp', { unique: false });
-                    store.createIndex('fileName', 'fileName', { unique: false });
-                }
-            };
-        });
-    }
-    
-    async _getCachedData(cacheKey) {
-        // Caching disabled as per user request to ensure fresh metadata on every load
-        return null;
-    }
-    
-    async _setCachedData(cacheKey, data, metadata = {}) {
-        // Caching disabled as per user request
-        return;
-    }
-    
-    async _cleanExpiredCache() {
-        if (!this.dbCache) return;
-        
-        try {
-            const tx = this.dbCache.transaction('fileCache', 'readwrite');
-            const store = tx.objectStore('fileCache');
-            const index = store.index('timestamp');
-            
-            const cutoffTime = Date.now() - this.config.maxCacheAge;
-            const range = IDBKeyRange.upperBound(cutoffTime);
-            
-            const request = index.openCursor(range);
-            let deletedCount = 0;
-            
-            request.onsuccess = (event) => {
-                const cursor = event.target.result;
-                if (cursor) {
-                    cursor.delete();
-                    deletedCount++;
-                    cursor.continue();
-                }
-            };
-            
-            await new Promise((resolve) => {
-                tx.oncomplete = () => {
-                    if (deletedCount > 0) {
-                        this.debugLog(`🗑️ Cleaned ${deletedCount} expired cache entries`, 'info');
-                    }
-                    resolve();
-                };
-            });
-        } catch (err) {
-            this.debugLog(`Cache cleanup error: ${err.message}`, 'error');
-        }
-    }
-    
-    // ========== INITIALIZATION ==========
-    
-    init(dependencies) {
-        this.metadataParser = dependencies.metadataParser;
-        this.vttParser = dependencies.vttParser;
-        this.analysisParser = dependencies.analysisParser;
-        this.customMetadataStore = dependencies.customMetadataStore;
-        this.analyzer = dependencies.analyzer;
-        this.workerManager = dependencies.workerManager || window.workerManager;
-        this.imageOptimizer = dependencies.imageOptimizer || window.imageOptimizer;
-        
-        this.debugLog('✅ Mobile-Optimized File Loading Manager v3.0 initialized', 'success');
-    }
-    
+
     setCallbacks(callbacks) {
         Object.assign(this.callbacks, callbacks);
     }
-    
-    // ========== MAIN LOADING METHODS ==========
-    
+
+    // ─── Public loading entry points ──────────────────────────────────────────
+
+    /**
+     * Load from a File System Access API directory handle, or fall back to a
+     * FileList / plain array (mobile or older browsers).
+     */
     async loadFromFolderHandle(handle) {
-        this.debugLog(`📂 Scanning folder: ${handle.name}...`, 'info');
+        // FileList / array fallback (mobile file picker)
+        if (handle instanceof FileList || Array.isArray(handle)) {
+            return this.loadFiles(Array.from(handle));
+        }
+
         const files = [];
-        
         try {
             for await (const entry of handle.values()) {
-                if (entry.kind === 'file') {
-                    const file = await entry.getFile();
-                    files.push(file);
+                if (entry.kind !== 'file') continue;
+                try {
+                    files.push(await entry.getFile());
+                } catch {
+                    this._log(`⚠️ Could not access: ${entry.name}`, 'warning');
                 }
             }
-            
-            this.debugLog(`✅ 📁 Found ${files.length} files`, 'success');
-            return await this.loadFiles(files);
         } catch (err) {
-            this.debugLog(`❌ Folder scan failed: ${err.message}`, 'error');
+            this._log(`❌ Folder scan failed: ${err.message}`, 'error');
             throw err;
         }
+
+        if (files.length === 0) throw new Error('No files found in folder');
+        this._log(`📂 Found ${files.length} file(s)`, 'info');
+        return this.loadFiles(files);
     }
 
     async loadFiles(files) {
-        if (!files || files.length === 0) {
-            this.debugLog('No files provided', 'warning');
+        if (!files?.length) {
             return { success: false, playlist: [], errors: [] };
         }
-        
         if (this.state.isLoading) {
-            this.debugLog('⚠️ Loading already in progress', 'warning');
+            this._log('⚠️ Load already in progress', 'warning');
             return { success: false, error: 'Loading already in progress' };
         }
-        
-        this.state.isLoading = true;
+
+        this.state.isLoading      = true;
         this.state.processedFiles = 0;
-        this.state.totalFiles = files.length;
-        this.state.errors = [];
-        this.state.warnings = [];
-        
+        this.state.totalFiles     = files.length;
+        this.state.errors         = [];
+        this.state.warnings       = [];
+
         const startTime = Date.now();
-        this.debugLog(`=== ${this.isMobile ? '📱 MOBILE' : '💻 DESKTOP'} Loading: ${files.length} files ===`);
-        
+        this._notify('onLoadStart', files.length);
+
         try {
-            this._notifyCallback('onLoadStart', files.length);
-            
-            // Step 1: Quick categorization (no await)
             const categorized = this._categorizeFiles(files);
-            
-            this.debugLog(
-                `📂 Categorized: ${categorized.audio.length} audio, ` +
-                `${categorized.vtt.length} VTT, ${categorized.analysis.length} analysis`
+            this._log(
+                `📂 ${categorized.audio.length} audio | ${categorized.vtt.length} VTT | ` +
+                `${categorized.analysis.length} analysis`, 'info'
             );
-            
-            // Step 2: Build file map (fast, no I/O)
-            const fileMap = this._buildFileMatchMap(categorized);
-            
-            // Step 3: PROGRESSIVE MODE - Create minimal entries immediately
-            let playlist;
-            if (this.config.progressiveMode) {
-                playlist = await this._progressiveLoad(categorized, fileMap, startTime);
-            } else {
-                // Standard mode - load everything upfront
-                playlist = await this._standardLoad(categorized, fileMap);
-            }
-            
+
+            const fileMap  = this._buildFileMatchMap(categorized);
+            const playlist = this.config.progressiveMode
+                ? await this._progressiveLoad(categorized, fileMap, startTime)
+                : await this._standardLoad(categorized, fileMap);
+
             const loadTime = Date.now() - startTime;
-            this.debugLog(
-                `✅ Loading complete in ${(loadTime / 1000).toFixed(2)}s: ` +
-                `${playlist.length} tracks | ${this.state.errors.length} errors`,
-                'success'
-            );
-            
-            this._notifyCallback('onLoadComplete', playlist);
-            
-            const stats = this._generateStats(categorized, playlist);
-            
+            this._log(`✅ Loaded ${playlist.length} tracks in ${(loadTime / 1000).toFixed(2)} s`, 'success');
+            this._notify('onLoadComplete', playlist);
+
             return {
-                success: true,
-                playlist: playlist,
-                stats: stats,
-                loadTime: loadTime,
-                errors: this.state.errors,
-                warnings: this.state.warnings
+                success:  true,
+                playlist,
+                stats:    this._generateStats(categorized, playlist),
+                loadTime,
+                errors:   this.state.errors,
+                warnings: this.state.warnings,
             };
-            
-        } catch (error) {
-            this.debugLog(`❌ Fatal loading error: ${error.message}`, 'error');
-            this._notifyCallback('onLoadError', error);
-            
-            return {
-                success: false,
-                playlist: [],
-                error: error.message,
-                errors: this.state.errors
-            };
-            
+
+        } catch (err) {
+            this._log(`❌ Fatal loading error: ${err.message}`, 'error');
+            this._notify('onLoadError', err);
+            return { success: false, playlist: [], error: err.message, errors: this.state.errors };
+
         } finally {
             this.state.isLoading = false;
         }
     }
-    
-    // ========== PROGRESSIVE LOADING (MOBILE OPTIMIZATION) ==========
-    
-    async _progressiveLoad(categorized, fileMap, startTime) {
-        this.debugLog('⚡ PROGRESSIVE MODE: Creating minimal entries', 'info');
-        
-        // Phase 1: Create minimal playlist entries IMMEDIATELY (< 100ms)
-        const minimalPlaylist = categorized.audio.map((audioFile, index) => {
-            const baseName = this._getBaseName(audioFile.name);
-            const matches = this._findMatchingFiles(baseName, fileMap);
-            
-            return {
-                audioURL: URL.createObjectURL(audioFile),
-                fileName: audioFile.name,
-                fileSize: audioFile.size,
-                vtt: matches.vtt || null,
-                metadata: {
-                    title: baseName,
-                    artist: 'Loading...',
-                    album: 'Unknown Album',
-                    image: null,
-                    hasMetadata: false,
-                    isLoading: true
-                },
-                duration: 0,
-                analysis: null,
-                hasDeepAnalysis: false,
-                loadedAt: Date.now(),
-                _needsProcessing: true,
-                _audioFile: audioFile,
-                file: audioFile, // Store File object for buffer manager
-                _matches: matches
-            };
-        });
-        
-        const quickLoadTime = Date.now() - startTime;
-        this.debugLog(`⚡ Phase 1 complete in ${quickLoadTime}ms - Playlist ready!`, 'success');
-        
-        // Notify UI immediately with minimal playlist
-        this._notifyCallback('onProgressiveUpdate', {
-            phase: 1,
-            playlist: minimalPlaylist,
-            message: 'Playlist ready - Loading details...'
-        });
-        
-        // Phase 2: Load metadata in background (prioritized)
-        this._scheduleBackgroundProcessing(minimalPlaylist, categorized);
-        
-        return minimalPlaylist;
-    }
-    
-    async _scheduleBackgroundProcessing(playlist, categorized) {
-        // Priority 1: Current track + next 2 tracks (load immediately)
-        const priorityTracks = playlist.slice(0, 3);
-        
-        // Priority 2: Rest of tracks (background)
-        const backgroundTracks = playlist.slice(3);
-        
-        // Process priority tracks first
-        for (let i = 0; i < priorityTracks.length; i++) {
-            const track = priorityTracks[i];
-            await this._enrichTrackMetadata(track, i, playlist.length);
-            
-            this._notifyCallback('onProgressiveUpdate', {
-                phase: 2,
-                priority: true,
-                trackIndex: i,
-                playlist: playlist
-            });
-        }
-        
-        // Process remaining tracks in background
-        this._processBackgroundQueue(backgroundTracks, 3, playlist);
-    }
-    
-    _processBackgroundQueue(tracks, offset, fullPlaylist) {
-        if (this.isProcessingBackground) return;
-        
-        this.isProcessingBackground = true;
-        let currentIndex = 0;
-        
-        const processNext = async () => {
-            if (currentIndex >= tracks.length) {
-                this.isProcessingBackground = false;
-                this.debugLog('✅ Background processing complete', 'success');
-                
-                this._notifyCallback('onProgressiveUpdate', {
-                    phase: 3,
-                    complete: true,
-                    playlist: fullPlaylist
-                });
-                return;
-            }
-            
-            const track = tracks[currentIndex];
-            const globalIndex = offset + currentIndex;
-            
-            try {
-                await this._enrichTrackMetadata(track, globalIndex, fullPlaylist.length);
-                
-                this._notifyCallback('onProgressiveUpdate', {
-                    phase: 2,
-                    priority: false,
-                    trackIndex: globalIndex,
-                    playlist: fullPlaylist,
-                    progress: Math.round(((currentIndex + 1) / tracks.length) * 100)
-                });
-            } catch (err) {
-                this.debugLog(`Background processing error: ${err.message}`, 'error');
-            }
-            
-            currentIndex++;
-            
-            // Use requestIdleCallback for non-blocking processing
-            if (this.config.useIdleCallback && 'requestIdleCallback' in window) {
-                requestIdleCallback(() => processNext(), { timeout: 2000 });
-            } else {
-                setTimeout(processNext, 50);
-            }
-        };
-        
-        processNext();
-    }
-    
-    async _enrichTrackMetadata(track, index, total) {
-        if (!track._needsProcessing) return;
-        
-        const cacheKey = this._getCacheKey(track._audioFile);
-        
-        // Check cache
-        const cached = await this._getCachedData(cacheKey);
-        if (cached) {
-            Object.assign(track, {
-                metadata: cached.metadata,
-                duration: cached.duration,
-                analysis: cached.analysis,
-                hasDeepAnalysis: cached.hasDeepAnalysis
-            });
-            delete track._needsProcessing;
-            delete track._audioFile;
-            delete track._matches;
-            return;
-        }
-        
-        // Extract metadata
-        try {
-            const metadata = await this._extractMetadata(track._audioFile);
-            track.metadata = metadata;
-            
-            // Get duration
-            const duration = await this._getAudioDuration(track._audioFile);
-            track.duration = duration;
-            
-            // Parse analysis if available
-            if (track._matches.analysis) {
-                track.analysis = await this._parseAnalysisFile(
-                    track._matches.analysis,
-                    track.fileName
-                );
-                track.hasDeepAnalysis = !!track.analysis;
-            } else if (this.analyzer) {
-                track.analysis = this.analyzer.analysisCache.get(track.fileName);
-            }
-            
-            // Cache the enriched data
-            await this._setCachedData(cacheKey, {
-                metadata: track.metadata,
-                duration: track.duration,
-                analysis: track.analysis,
-                hasDeepAnalysis: track.hasDeepAnalysis
-            }, {
-                fileName: track.fileName,
-                size: track.fileSize
-            });
-            
-            delete track._needsProcessing;
-            delete track._audioFile;
-            delete track._matches;
-            
-        } catch (err) {
-            this.debugLog(`Metadata extraction failed: ${track.fileName}`, 'error');
-            track.metadata.artist = 'Unknown Artist';
-            track.metadata.isLoading = false;
-        }
-        
-        this._updateProgress(index + 1, total, track.fileName, !!cached);
-    }
-    
-    // ========== STANDARD LOADING ==========
-    
-    async _standardLoad(categorized, fileMap) {
-        const playlist = [];
-        const chunks = this._chunkArray(categorized.audio, this.config.chunkSize);
-        
-        this.debugLog(`⚡ Processing ${categorized.audio.length} files in ${chunks.length} chunks`);
-        
-        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-            const chunk = chunks[chunkIndex];
-            
-            const chunkResults = await this._processConcurrent(
-                chunk,
-                async (audioFile, index) => {
-                    const globalIndex = chunkIndex * this.config.chunkSize + index;
-                    return await this._processAudioFileWithRetry(
-                        audioFile,
-                        fileMap,
-                        globalIndex,
-                        categorized.audio.length
-                    );
-                },
-                this.config.maxConcurrent
-            );
-            
-            for (const result of chunkResults) {
-                if (result.success) {
-                    playlist.push(result.data);
-                }
-            }
-            
-            this._notifyCallback('onChunkComplete', {
-                chunk: chunkIndex + 1,
-                total: chunks.length,
-                processed: (chunkIndex + 1) * this.config.chunkSize,
-                playlist: playlist
-            });
-        }
-        
-        return this._postProcessPlaylist(playlist);
-    }
-    
-    // ========== FILE CATEGORIZATION ==========
-    
-    _categorizeFiles(files) {
-        const categorized = {
-            audio: [],
-            vtt: [],
-            analysis: [],
-            unknown: []
-        };
-        
-        for (const file of files) {
-            const category = this._categorizeFile(file);
-            categorized[category].push(file);
-            
-            if (category === 'unknown') {
-                this.state.warnings.push({
-                    file: file.name,
-                    message: 'Unknown file type'
-                });
-            }
-        }
-        
-        return categorized;
-    }
-    
-    _categorizeFile(file) {
-        const nameLower = file.name.toLowerCase();
-        const extension = nameLower.split('.').pop();
-        
-        if (file.type.startsWith('audio/') || 
-            this.config.supportedAudioFormats.includes(extension)) {
-            return 'audio';
-        }
-        
-        if (extension === 'vtt' || file.type === 'text/vtt') {
-            return 'vtt';
-        }
-        
-        if (extension === 'txt' || file.type === 'text/plain') {
-            return 'analysis';
-        }
-        
-        return 'unknown';
-    }
-    
-    // ========== SMART FILE MATCHING ==========
-    
-    _buildFileMatchMap(categorized) {
-        const map = {
-            byBaseName: new Map(),
-            vttFiles: categorized.vtt,
-            analysisFiles: categorized.analysis
-        };
-        
-        const allFiles = [...categorized.vtt, ...categorized.analysis];
-        
-        for (const file of allFiles) {
-            const baseName = this._getBaseName(file.name);
-            
-            if (!map.byBaseName.has(baseName)) {
-                map.byBaseName.set(baseName, []);
-            }
-            map.byBaseName.get(baseName).push(file);
-        }
-        
-        return map;
-    }
-    
-    _getBaseName(filename) {
-        return filename
-            .split('.').slice(0, -1).join('.')
-            .toLowerCase()
-            .trim();
-    }
-    
-    _findMatchingFiles(audioBaseName, fileMap) {
-        const matches = {
-            vtt: null,
-            analysis: null
-        };
-        
-        // Try exact match first
-        const exactMatches = fileMap.byBaseName.get(audioBaseName) || [];
-        
-        for (const file of exactMatches) {
-            const ext = file.name.toLowerCase().split('.').pop();
-            if (ext === 'vtt' && !matches.vtt) {
-                matches.vtt = file;
-            } else if (ext === 'txt' && !matches.analysis) {
-                matches.analysis = file;
-            }
-        }
-        
-        // Fuzzy matching only if necessary
-        if (!matches.vtt) {
-            matches.vtt = this._fuzzyMatch(audioBaseName, fileMap.vttFiles);
-        }
-        
-        if (!matches.analysis) {
-            matches.analysis = this._fuzzyMatch(audioBaseName, fileMap.analysisFiles);
-        }
-        
-        return matches;
-    }
-    
-    _fuzzyMatch(baseName, files) {
-        let bestMatch = null;
-        let bestScore = 0;
-        
-        for (const file of files) {
-            const fileBaseName = this._getBaseName(file.name);
-            const score = this._calculateSimilarity(baseName, fileBaseName);
-            
-            if (score > bestScore && score >= this.config.fuzzyMatchThreshold) {
-                bestScore = score;
-                bestMatch = file;
-            }
-        }
-        
-        return bestMatch;
-    }
-    
-    _calculateSimilarity(str1, str2) {
-        const longer = str1.length > str2.length ? str1 : str2;
-        const shorter = str1.length > str2.length ? str2 : str1;
-        
-        if (longer.length === 0) return 1.0;
-        
-        const editDistance = this._levenshteinDistance(longer, shorter);
-        return (longer.length - editDistance) / longer.length;
-    }
-    
-    _levenshteinDistance(str1, str2) {
-        const matrix = [];
-        
-        for (let i = 0; i <= str2.length; i++) {
-            matrix[i] = [i];
-        }
-        
-        for (let j = 0; j <= str1.length; j++) {
-            matrix[0][j] = j;
-        }
-        
-        for (let i = 1; i <= str2.length; i++) {
-            for (let j = 1; j <= str1.length; j++) {
-                if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-                    matrix[i][j] = matrix[i - 1][j - 1];
-                } else {
-                    matrix[i][j] = Math.min(
-                        matrix[i - 1][j - 1] + 1,
-                        matrix[i][j - 1] + 1,
-                        matrix[i - 1][j] + 1
-                    );
-                }
-            }
-        }
-        
-        return matrix[str2.length][str1.length];
-    }
-    
-    // ========== PARALLEL PROCESSING ==========
-    
-    async _processConcurrent(items, processor, concurrency) {
-        const results = [];
-        const executing = [];
-        
-        for (let i = 0; i < items.length; i++) {
-            const promise = processor(items[i], i).then(result => {
-                executing.splice(executing.indexOf(promise), 1);
-                return result;
-            });
-            
-            results.push(promise);
-            executing.push(promise);
-            
-            if (executing.length >= concurrency) {
-                await Promise.race(executing);
-            }
-        }
-        
-        return await Promise.all(results);
-    }
-    
-    _chunkArray(array, chunkSize) {
-        const chunks = [];
-        for (let i = 0; i < array.length; i += chunkSize) {
-            chunks.push(array.slice(i, i + chunkSize));
-        }
-        return chunks;
-    }
-    
-    // ========== FILE PROCESSING ==========
-    
-    async _processAudioFileWithRetry(audioFile, fileMap, index, total) {
-        let lastError = null;
-        
-        for (let attempt = 0; attempt <= this.config.retryAttempts; attempt++) {
-            try {
-                if (attempt > 0) {
-                    await this._delay(this.config.retryDelay * attempt);
-                }
-                
-                const result = await this._processAudioFile(audioFile, fileMap, index, total);
-                return { success: true, data: result };
-                
-            } catch (error) {
-                lastError = error;
-            }
-        }
-        
-        this.state.errors.push({
-            file: audioFile.name,
-            error: lastError.message
-        });
-        
-        return { success: false, error: lastError };
-    }
-    
-    async _processAudioFile(audioFile, fileMap, index, total) {
-        const baseName = this._getBaseName(audioFile.name);
-        const cacheKey = this._getCacheKey(audioFile);
-        
-        // Check cache
-        const cached = await this._getCachedData(cacheKey);
-        if (cached && !this.config.forceRefresh) {
-            this._updateProgress(index + 1, total, audioFile.name, true);
-            
-            return {
-                ...cached,
-                audioURL: URL.createObjectURL(audioFile),
-                loadedAt: Date.now()
-            };
-        }
-        
-        // Find matching files
-        const matches = this._findMatchingFiles(baseName, fileMap);
-        
-        // Parse analysis
-        let parsedAnalysis = null;
-        if (matches.analysis) {
-            parsedAnalysis = await this._parseAnalysisFile(matches.analysis, audioFile.name);
-        }
-        
-        // Extract metadata
-        const metadata = await this._extractMetadata(audioFile);
-        
-        // Get duration
-        const duration = await this._getAudioDuration(audioFile);
-        
-        // Create blob URL
-        const audioURL = URL.createObjectURL(audioFile);
-        
-        // Check cached analysis
-        const finalAnalysis = parsedAnalysis || 
-            (this.analyzer ? this.analyzer.analysisCache.get(audioFile.name) : null);
-        
-        // Build entry
-        const entry = {
-            audioURL: audioURL,
-            fileName: audioFile.name,
-            fileSize: audioFile.size,
-            file: audioFile, // Store File object for buffer manager
-            vtt: matches.vtt || null,
-            metadata: metadata,
-            duration: duration,
-            analysis: finalAnalysis,
-            hasDeepAnalysis: !!parsedAnalysis,
-            loadedAt: Date.now()
-        };
-        
-        // Cache for future
-        await this._setCachedData(cacheKey, {
-            fileName: entry.fileName,
-            fileSize: entry.fileSize,
-            vtt: entry.vtt,
-            metadata: entry.metadata,
-            duration: entry.duration,
-            analysis: entry.analysis,
-            hasDeepAnalysis: entry.hasDeepAnalysis
-        }, {
-            fileName: audioFile.name,
-            size: audioFile.size
-        });
-        
-        this._updateProgress(index + 1, total, audioFile.name, false);
-        this._notifyCallback('onFileProcessed', entry);
-        
-        return entry;
-    }
-    
-    _getCacheKey(file) {
-        return `${file.name}_${file.size}_${file.lastModified || 0}`;
-    }
-    
-    async _parseAnalysisFile(analysisFile, audioFileName) {
-        if (!this.analysisParser) return null;
-        
-        try {
-            const analysisText = await analysisFile.text();
-            const parsed = this.analysisParser.parseAnalysisText(analysisText);
-            
-            if (this.analysisParser.isValidAnalysis(parsed)) {
-                return parsed;
-            }
-        } catch (err) {
-            this.state.errors.push({
-                file: analysisFile.name,
-                error: `Analysis parse failed: ${err.message}`
-            });
-        }
-        
-        return null;
-    }
-    
-    async _extractMetadata(audioFile) {
-        if (!this.metadataParser) {
-            return this._createDefaultMetadata(audioFile);
-        }
-        
-        let metadata = await this.metadataParser.extractMetadata(audioFile);
-        
-        // Check custom metadata
-        if (this.customMetadataStore) {
-            const customMeta = this.customMetadataStore.get(audioFile.name, audioFile.size);
-            if (customMeta) {
-                metadata = {
-                    ...metadata,
-                    ...customMeta,
-                    hasMetadata: true,
-                    isCustom: true
-                };
-            }
-        }
-        
-        // Optimize image if available
-        if (metadata.image && this.imageOptimizer) {
-            try {
-                metadata.optimizedImage = await this.imageOptimizer.optimizeImage(
-                    metadata.image,
-                    'thumbnail'
-                );
-            } catch (err) {
-                this.debugLog(`Image optimization failed for ${audioFile.name}`, 'warning');
-            }
-        }
-        
-        return metadata;
-    }
-    
-    _createDefaultMetadata(audioFile) {
-        return {
-            title: audioFile.name.split('.')[0],
-            artist: 'Unknown Artist',
-            album: 'Unknown Album',
-            image: null,
-            hasMetadata: false
-        };
-    }
-    
-    async _getAudioDuration(audioFile) {
-        const tempAudio = new Audio();
-        const blobURL = URL.createObjectURL(audioFile);
-        tempAudio.src = blobURL;
-        
-        return new Promise((resolve) => {
-            const timeout = setTimeout(() => {
-                resolve(0);
-                URL.revokeObjectURL(blobURL);
-            }, 3000); // Shorter timeout for mobile
-            
-            tempAudio.addEventListener('loadedmetadata', () => {
-                clearTimeout(timeout);
-                const duration = tempAudio.duration;
-                URL.revokeObjectURL(blobURL);
-                resolve(duration || 0);
-            }, { once: true });
-            
-            tempAudio.addEventListener('error', () => {
-                clearTimeout(timeout);
-                URL.revokeObjectURL(blobURL);
-                resolve(0);
-            }, { once: true });
-        });
-    }
-    
-    // ========== POST-PROCESSING ==========
-    
-    async _postProcessPlaylist(playlist) {
-        // Sort by file name
-        playlist.sort((a, b) => a.fileName.localeCompare(b.fileName));
-        
-        // Remove duplicates
-        const seen = new Set();
-        const deduplicated = playlist.filter(track => {
-            const key = `${track.fileName}_${track.fileSize}`;
-            if (seen.has(key)) {
-                URL.revokeObjectURL(track.audioURL);
-                return false;
-            }
-            seen.add(key);
-            return true;
-        });
-        
-        return deduplicated;
-    }
-    
-    // ========== FOLDER LOADING ==========
-    
-    async loadFromFolderHandle(folderHandle) {
-        this.debugLog('📂 Scanning folder...', 'info');
-        
-        const files = [];
-        
-        try {
-            // Check if folderHandle is actually a FileList (fallback for mobile)
-            if (folderHandle instanceof FileList || Array.isArray(folderHandle)) {
-                this.debugLog('📱 Using file list fallback for mobile folder loading', 'info');
-                return await this.loadFiles(Array.from(folderHandle));
-            }
 
-            // Standard File System Access API
-            for await (const entry of folderHandle.values()) {
-                if (entry.kind === 'file') {
-                    try {
-                        const file = await entry.getFile();
-                        files.push(file);
-                    } catch (err) {
-                        this.debugLog(`⚠️ Couldn't access: ${entry.name}`, 'warning');
-                    }
-                }
-            }
-            
-            if (files.length === 0) {
-                throw new Error('No files found in folder');
-            }
-            
-            this.debugLog(`📁 Found ${files.length} files`, 'success');
-            
-            return await this.loadFiles(files);
-            
-        } catch (error) {
-            this.debugLog(`Error scanning folder: ${error.message}`, 'error');
-            
-            // If it failed and we're on mobile, try to trigger the fallback
-            if (this.isMobile) {
-                this.debugLog('🔄 Attempting mobile fallback...', 'warning');
-                return this.triggerMobileFolderFallback();
-            }
-            throw error;
-        }
-    }
-
-    triggerMobileFolderFallback() {
-        return new Promise((resolve) => {
-            let input = document.getElementById('mobile-folder-fallback');
-            if (!input) {
-                input = document.createElement('input');
-                input.id = 'mobile-folder-fallback';
-                input.type = 'file';
-                input.webkitdirectory = true;
-                input.directory = true;
-                input.style.display = 'none';
-                document.body.appendChild(input);
-            }
-
-            input.onchange = async (e) => {
-                if (e.target.files.length > 0) {
-                    const result = await this.loadFiles(Array.from(e.target.files));
-                    resolve(result);
-                } else {
-                    resolve({ success: false, error: 'No files selected' });
-                }
-            };
-
-            input.click();
-        });
-    }
-    
-    // ========== FILE INPUT HELPERS ==========
-    
+    /** Prompt the user to pick files via a hidden <input>. */
     createFileInput(options = {}) {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = options.accept || 'audio/*,.vtt,.txt';
-        input.multiple = options.multiple !== false;
-        
-        input.style.display = 'none';
-        document.body.appendChild(input);
-        
         return new Promise((resolve, reject) => {
-            input.onchange = async (e) => {
-                document.body.removeChild(input);
-                
-                const files = Array.from(e.target.files);
-                if (files.length === 0) {
-                    reject(new Error('No files selected'));
-                    return;
-                }
-                
-                const result = await this.loadFiles(files);
-                resolve(result);
+            const input    = document.createElement('input');
+            input.type     = 'file';
+            input.accept   = options.accept  ?? 'audio/*,.vtt,.txt';
+            input.multiple = options.multiple !== false;
+            input.style.display = 'none';
+            document.body.appendChild(input);
+
+            const cleanup = () => {
+                try { document.body.removeChild(input); } catch (_) {}
             };
-            
-            input.oncancel = () => {
-                document.body.removeChild(input);
-                reject(new Error('File selection cancelled'));
-            };
-            
+
+            input.addEventListener('change', async (e) => {
+                cleanup();
+                const files = Array.from(e.target.files ?? []);
+                if (!files.length) { reject(new AbortError('No files selected')); return; }
+                resolve(await this.loadFiles(files));
+            });
+
+            // 'cancel' is Chrome 113+ only — use a focus-based fallback for other browsers
+            input.addEventListener('cancel', () => { cleanup(); reject(new AbortError('Cancelled')); });
+            window.addEventListener('focus', function onFocus() {
+                window.removeEventListener('focus', onFocus);
+                // Give the change event time to fire before treating focus as a cancel
+                setTimeout(() => { if (input.parentNode) { cleanup(); reject(new AbortError('Cancelled')); } }, 500);
+            }, { once: true });
+
             setTimeout(() => input.click(), 100);
         });
     }
-    
-    // ========== CLEANUP ==========
-    
-    cleanupPlaylist(playlist) {
-        let revokedCount = 0;
-        
-        for (const track of playlist) {
-            if (track.audioURL) {
-                URL.revokeObjectURL(track.audioURL);
-                revokedCount++;
-            }
-            
-            if (track.metadata?.image?.startsWith('blob:')) {
-                URL.revokeObjectURL(track.metadata.image);
-                revokedCount++;
-            }
-        }
-        
-        this.debugLog(`🗑️ Cleaned up ${revokedCount} blob URLs`, 'info');
+
+    // ─── Progressive loading ──────────────────────────────────────────────────
+
+    async _progressiveLoad(categorized, fileMap, startTime) {
+        // Phase 1: build minimal stubs instantly — UI can render the playlist right away
+        const playlist = categorized.audio.map(audioFile => {
+            const baseName = this._getBaseName(audioFile.name);
+            const matches  = this._findMatchingFiles(baseName, fileMap);
+            return {
+                audioURL:       URL.createObjectURL(audioFile),
+                fileName:       audioFile.name,
+                fileSize:       audioFile.size,
+                file:           audioFile,
+                vtt:            matches.vtt      ?? null,
+                metadata:       { title: baseName, artist: 'Loading…', album: 'Unknown Album',
+                                  image: null, hasMetadata: false, isLoading: true },
+                duration:       0,
+                analysis:       null,
+                hasDeepAnalysis:false,
+                loadedAt:       Date.now(),
+                _needsProcessing: true,
+                _matches:       matches,
+            };
+        });
+
+        this._log(`⚡ Phase 1: ${playlist.length} stubs in ${Date.now() - startTime} ms`, 'success');
+        this._notify('onProgressiveUpdate', { phase: 1, playlist, message: 'Playlist ready — loading details…' });
+
+        // Phase 2: enrich in background (fire-and-forget, errors logged internally)
+        this._scheduleBackgroundProcessing(playlist).catch(err => {
+            this._log(`⚠️ Background processing error: ${err.message}`, 'warning');
+        });
+
+        return playlist;
     }
-    
-    async clearCache() {
-        // Clear memory cache
-        const memorySize = this.memoryCache.size;
-        this.memoryCache.clear();
-        
-        // Clear IndexedDB cache
-        if (this.dbCache) {
-            try {
-                const tx = this.dbCache.transaction('fileCache', 'readwrite');
-                const store = tx.objectStore('fileCache');
-                await new Promise((resolve, reject) => {
-                    const request = store.clear();
-                    request.onsuccess = () => resolve();
-                    request.onerror = () => reject(request.error);
-                });
-                
-                this.debugLog(`🗑️ Cleared all cache (${memorySize} memory entries)`, 'info');
-            } catch (err) {
-                this.debugLog(`Cache clear error: ${err.message}`, 'error');
-            }
+
+    async _scheduleBackgroundProcessing(playlist) {
+        // Priority: first three tracks (likely about to play)
+        for (let i = 0; i < Math.min(3, playlist.length); i++) {
+            await this._enrichTrackMetadata(playlist[i], i, playlist.length);
+            this._notify('onProgressiveUpdate', { phase: 2, priority: true, trackIndex: i, playlist });
         }
+
+        // Rest of the playlist — yield to the browser between each track
+        await this._processBackgroundQueue(playlist.slice(3), 3, playlist);
     }
-    
-    // ========== UTILITIES ==========
-    
-    _updateProgress(current, total, filename, fromCache) {
-        this.state.processedFiles = current;
-        
-        this._notifyCallback('onLoadProgress', {
-            current: current,
-            total: total,
-            filename: filename,
-            percentage: Math.round((current / total) * 100),
-            fromCache: fromCache
+
+    _processBackgroundQueue(tracks, offset, fullPlaylist) {
+        return new Promise((resolve) => {
+            if (!tracks.length) { resolve(); return; }
+
+            let i = 0;
+
+            const processNext = async () => {
+                if (i >= tracks.length) {
+                    this._isProcessingBackground = false;
+                    this._notify('onProgressiveUpdate', { phase: 3, complete: true, playlist: fullPlaylist });
+                    resolve();
+                    return;
+                }
+
+                try {
+                    await this._enrichTrackMetadata(tracks[i], offset + i, fullPlaylist.length);
+                    this._notify('onProgressiveUpdate', {
+                        phase:      2,
+                        priority:   false,
+                        trackIndex: offset + i,
+                        playlist:   fullPlaylist,
+                        progress:   Math.round(((i + 1) / tracks.length) * 100),
+                    });
+                } catch (err) {
+                    this._log(`Background metadata error: ${err.message}`, 'warning');
+                }
+
+                i++;
+
+                if (this.config.useIdleCallback && 'requestIdleCallback' in window) {
+                    requestIdleCallback(() => processNext(), { timeout: 2000 });
+                } else {
+                    setTimeout(processNext, 50);
+                }
+            };
+
+            this._isProcessingBackground = true;
+            processNext();
         });
     }
-    
-    _notifyCallback(name, data) {
-        if (this.callbacks[name]) {
+
+    async _enrichTrackMetadata(track, index, total) {
+        if (!track._needsProcessing) return;
+
+        try {
+            track.metadata = await this._extractMetadata(track.file);
+            track.duration = await this._getAudioDuration(track.file);
+
+            if (track._matches?.analysis) {
+                track.analysis       = await this._parseAnalysisFile(track._matches.analysis, track.fileName);
+                track.hasDeepAnalysis = !!track.analysis;
+            } else if (this.analyzer) {
+                track.analysis = this.analyzer.analysisCache.get(track.fileName) ?? null;
+            }
+        } catch (err) {
+            this._log(`Metadata extraction failed: ${track.fileName} — ${err.message}`, 'warning');
+            track.metadata.artist    = 'Unknown Artist';
+            track.metadata.isLoading = false;
+        }
+
+        delete track._needsProcessing;
+        delete track._matches;
+
+        this._updateProgress(index + 1, total, track.fileName);
+    }
+
+    // ─── Standard (non-progressive) loading ───────────────────────────────────
+
+    async _standardLoad(categorized, fileMap) {
+        const playlist = [];
+        const chunks   = this._chunkArray(categorized.audio, this.config.chunkSize);
+
+        for (let ci = 0; ci < chunks.length; ci++) {
+            const results = await this._processConcurrent(
+                chunks[ci],
+                (audioFile, localIdx) =>
+                    this._processAudioFileWithRetry(
+                        audioFile, fileMap,
+                        ci * this.config.chunkSize + localIdx,
+                        categorized.audio.length
+                    ),
+                this.config.maxConcurrent
+            );
+
+            for (const r of results) {
+                if (r.success) playlist.push(r.data);
+            }
+
+            this._notify('onChunkComplete', {
+                chunk: ci + 1, total: chunks.length,
+                processed: Math.min((ci + 1) * this.config.chunkSize, categorized.audio.length),
+                playlist,
+            });
+        }
+
+        return this._postProcessPlaylist(playlist);
+    }
+
+    async _processAudioFileWithRetry(audioFile, fileMap, index, total) {
+        let lastError;
+        for (let attempt = 0; attempt <= this.config.retryAttempts; attempt++) {
             try {
-                this.callbacks[name](data);
+                if (attempt > 0) await this._delay(this.config.retryDelayMs * attempt);
+                const data = await this._processAudioFile(audioFile, fileMap, index, total);
+                return { success: true, data };
             } catch (err) {
-                this.debugLog(`Callback error (${name}): ${err.message}`, 'error');
+                lastError = err;
             }
         }
+        this.state.errors.push({ file: audioFile.name, error: lastError.message });
+        return { success: false, error: lastError };
     }
-    
-    _generateStats(categorized, playlist) {
+
+    async _processAudioFile(audioFile, fileMap, index, total) {
+        const baseName = this._getBaseName(audioFile.name);
+        const matches  = this._findMatchingFiles(baseName, fileMap);
+
+        const [metadata, duration, analysis] = await Promise.all([
+            this._extractMetadata(audioFile),
+            this._getAudioDuration(audioFile),
+            matches.analysis ? this._parseAnalysisFile(matches.analysis, audioFile.name) : Promise.resolve(null),
+        ]);
+
+        const entry = {
+            audioURL:       URL.createObjectURL(audioFile),
+            fileName:       audioFile.name,
+            fileSize:       audioFile.size,
+            file:           audioFile,
+            vtt:            matches.vtt ?? null,
+            metadata,
+            duration,
+            analysis:       analysis ?? (this.analyzer?.analysisCache.get(audioFile.name) ?? null),
+            hasDeepAnalysis:!!analysis,
+            loadedAt:       Date.now(),
+        };
+
+        this._updateProgress(index + 1, total, audioFile.name);
+        this._notify('onFileProcessed', entry);
+        return entry;
+    }
+
+    // ─── File categorisation ──────────────────────────────────────────────────
+
+    _categorizeFiles(files) {
+        const out = { audio: [], vtt: [], analysis: [], unknown: [] };
+        for (const file of files) {
+            const cat = this._categorizeFile(file);
+            out[cat].push(file);
+            if (cat === 'unknown') this.state.warnings.push({ file: file.name, message: 'Unknown file type' });
+        }
+        return out;
+    }
+
+    _categorizeFile(file) {
+        const ext = file.name.toLowerCase().split('.').pop();
+        if (file.type.startsWith('audio/') || this.config.supportedAudioFormats.includes(ext)) return 'audio';
+        if (ext === 'vtt' || file.type === 'text/vtt')   return 'vtt';
+        if (ext === 'txt' || file.type === 'text/plain') return 'analysis';
+        return 'unknown';
+    }
+
+    // ─── File matching ────────────────────────────────────────────────────────
+
+    _buildFileMatchMap(categorized) {
+        const map = { byBaseName: new Map(), vttFiles: categorized.vtt, analysisFiles: categorized.analysis };
+        for (const file of [...categorized.vtt, ...categorized.analysis]) {
+            const base = this._getBaseName(file.name);
+            if (!map.byBaseName.has(base)) map.byBaseName.set(base, []);
+            map.byBaseName.get(base).push(file);
+        }
+        return map;
+    }
+
+    _getBaseName(filename) {
+        return filename.split('.').slice(0, -1).join('.').toLowerCase().trim();
+    }
+
+    _findMatchingFiles(audioBase, fileMap) {
+        const matches   = { vtt: null, analysis: null };
+        const exact     = fileMap.byBaseName.get(audioBase) ?? [];
+
+        for (const file of exact) {
+            const ext = file.name.toLowerCase().split('.').pop();
+            if (ext === 'vtt' && !matches.vtt)      matches.vtt      = file;
+            if (ext === 'txt' && !matches.analysis)  matches.analysis = file;
+        }
+
+        if (!matches.vtt)      matches.vtt      = this._fuzzyMatch(audioBase, fileMap.vttFiles);
+        if (!matches.analysis) matches.analysis = this._fuzzyMatch(audioBase, fileMap.analysisFiles);
+
+        return matches;
+    }
+
+    _fuzzyMatch(baseName, files) {
+        let bestFile  = null;
+        let bestScore = 0;
+        for (const file of files) {
+            const score = this._similarity(baseName, this._getBaseName(file.name));
+            if (score > bestScore && score >= this.config.fuzzyMatchThreshold) {
+                bestScore = score;
+                bestFile  = file;
+            }
+        }
+        return bestFile;
+    }
+
+    _similarity(a, b) {
+        const long  = a.length >= b.length ? a : b;
+        const short = a.length >= b.length ? b : a;
+        if (!long.length) return 1;
+        return (long.length - this._editDistance(long, short)) / long.length;
+    }
+
+    _editDistance(s, t) {
+        // Two-row DP — O(n) space instead of O(n²)
+        let prev = Array.from({ length: t.length + 1 }, (_, i) => i);
+        for (let i = 1; i <= s.length; i++) {
+            const curr = [i];
+            for (let j = 1; j <= t.length; j++) {
+                curr[j] = s[i - 1] === t[j - 1]
+                    ? prev[j - 1]
+                    : 1 + Math.min(prev[j - 1], prev[j], curr[j - 1]);
+            }
+            prev = curr;
+        }
+        return prev[t.length];
+    }
+
+    // ─── Concurrency helper ───────────────────────────────────────────────────
+
+    async _processConcurrent(items, processor, concurrency) {
+        const results  = new Array(items.length);
+        const executing = new Set();
+
+        for (let i = 0; i < items.length; i++) {
+            const idx = i;
+            const p   = processor(items[idx], idx).then(r => {
+                executing.delete(p);
+                results[idx] = r;
+            });
+            executing.add(p);
+            if (executing.size >= concurrency) await Promise.race(executing);
+        }
+
+        await Promise.all(executing);
+        return results;
+    }
+
+    // ─── Metadata & duration ──────────────────────────────────────────────────
+
+    async _extractMetadata(audioFile) {
+        if (!this.metadataParser) return this._defaultMetadata(audioFile);
+
+        let meta = await this.metadataParser.extractMetadata(audioFile);
+
+        if (this.customMetadataStore) {
+            const custom = this.customMetadataStore.get(audioFile.name, audioFile.size);
+            if (custom) meta = { ...meta, ...custom, hasMetadata: true, isCustom: true };
+        }
+
+        if (meta.image && this.imageOptimizer) {
+            try {
+                meta.optimizedImage = await this.imageOptimizer.optimizeImage(meta.image, 'thumbnail');
+            } catch {
+                // Non-fatal — proceed without optimized image
+            }
+        }
+
+        return meta;
+    }
+
+    _defaultMetadata(audioFile) {
         return {
-            totalFiles: this.state.totalFiles,
-            audioFiles: categorized.audio.length,
-            vttFiles: categorized.vtt.length,
-            analysisFiles: categorized.analysis.length,
-            unknownFiles: categorized.unknown?.length || 0,
-            playlistSize: playlist.length,
-            errors: this.state.errors.length,
-            warnings: this.state.warnings.length,
-            withLyrics: playlist.filter(t => t.vtt).length,
-            withAnalysis: playlist.filter(t => t.analysis).length,
-            withDeepAnalysis: playlist.filter(t => t.hasDeepAnalysis).length,
-            totalDuration: playlist.reduce((sum, t) => sum + (t.duration || 0), 0),
-            cacheHits: this.memoryCache.size,
-            isMobile: this.isMobile,
-            progressiveMode: this.config.progressiveMode
+            title:       audioFile.name.split('.').slice(0, -1).join('.') || audioFile.name,
+            artist:     'Unknown Artist',
+            album:      'Unknown Album',
+            image:       null,
+            hasMetadata: false,
         };
     }
-    
-    _delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
-    
-    // ========== STATE MANAGEMENT ==========
-    
-    getState() {
-        return { ...this.state };
-    }
-    
-    getErrors() {
-        return [...this.state.errors];
-    }
-    
-    getWarnings() {
-        return [...this.state.warnings];
-    }
-    
-    isLoading() {
-        return this.state.isLoading;
-    }
-    
-    // ========== PUBLIC API FOR PROGRESSIVE UPDATES ==========
-    
-    async forceRefreshTrack(trackIndex, playlist) {
-        if (!playlist[trackIndex] || !playlist[trackIndex]._audioFile) {
-            return;
-        }
-        
-        await this._enrichTrackMetadata(playlist[trackIndex], trackIndex, playlist.length);
-        
-        this._notifyCallback('onProgressiveUpdate', {
-            phase: 2,
-            priority: true,
-            trackIndex: trackIndex,
-            playlist: playlist
+
+    _getAudioDuration(audioFile) {
+        return new Promise(resolve => {
+            const url   = URL.createObjectURL(audioFile);
+            const audio = new Audio();
+            audio.preload = 'metadata';
+
+            const cleanup = (duration = 0) => {
+                clearTimeout(timer);
+                audio.src = '';           // release the resource
+                URL.revokeObjectURL(url);
+                resolve(duration);
+            };
+
+            const timer = setTimeout(() => cleanup(0), 4000);
+
+            audio.addEventListener('loadedmetadata', () => cleanup(audio.duration || 0), { once: true });
+            audio.addEventListener('error',          () => cleanup(0),                   { once: true });
+
+            audio.src = url;
+            audio.load();
         });
+    }
+
+    async _parseAnalysisFile(file, audioFileName) {
+        if (!this.analysisParser) return null;
+        try {
+            const text   = await file.text();
+            const parsed = this.analysisParser.parseAnalysisText(text);
+            return this.analysisParser.isValidAnalysis(parsed) ? parsed : null;
+        } catch (err) {
+            this.state.errors.push({ file: file.name, error: `Analysis parse failed: ${err.message}` });
+            return null;
+        }
+    }
+
+    // ─── Post-processing ──────────────────────────────────────────────────────
+
+    _postProcessPlaylist(playlist) {
+        playlist.sort((a, b) => a.fileName.localeCompare(b.fileName));
+
+        const seen = new Set();
+        return playlist.filter(track => {
+            const key = `${track.fileName}_${track.fileSize}`;
+            if (seen.has(key)) { URL.revokeObjectURL(track.audioURL); return false; }
+            seen.add(key);
+            return true;
+        });
+    }
+
+    // ─── Cleanup ──────────────────────────────────────────────────────────────
+
+    cleanupPlaylist(playlist) {
+        let count = 0;
+        for (const track of playlist) {
+            if (track.audioURL) { URL.revokeObjectURL(track.audioURL); count++; }
+            if (track.metadata?.image?.startsWith('blob:')) {
+                URL.revokeObjectURL(track.metadata.image); count++;
+            }
+        }
+        this._log(`🗑️ Revoked ${count} blob URL(s)`, 'info');
+    }
+
+    // ─── Utilities ────────────────────────────────────────────────────────────
+
+    _chunkArray(array, size) {
+        const chunks = [];
+        for (let i = 0; i < array.length; i += size) chunks.push(array.slice(i, i + size));
+        return chunks;
+    }
+
+    _delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    _updateProgress(current, total, filename) {
+        this.state.processedFiles = current;
+        this._notify('onLoadProgress', {
+            current, total, filename,
+            percentage: Math.round((current / total) * 100),
+        });
+    }
+
+    _notify(name, data) {
+        if (!this.callbacks[name]) return;
+        try { this.callbacks[name](data); }
+        catch (err) { this._log(`Callback error (${name}): ${err.message}`, 'error'); }
+    }
+
+    _generateStats(categorized, playlist) {
+        return {
+            totalFiles:     this.state.totalFiles,
+            audioFiles:     categorized.audio.length,
+            vttFiles:       categorized.vtt.length,
+            analysisFiles:  categorized.analysis.length,
+            unknownFiles:   categorized.unknown.length,
+            playlistSize:   playlist.length,
+            errors:         this.state.errors.length,
+            warnings:       this.state.warnings.length,
+            withLyrics:     playlist.filter(t => t.vtt).length,
+            withAnalysis:   playlist.filter(t => t.analysis).length,
+            withDeepAnalysis: playlist.filter(t => t.hasDeepAnalysis).length,
+            totalDuration:  playlist.reduce((s, t) => s + (t.duration ?? 0), 0),
+            isMobile:       this.isMobile,
+            progressiveMode:this.config.progressiveMode,
+        };
+    }
+
+    // State accessors
+    getState()    { return { ...this.state }; }
+    getErrors()   { return [...this.state.errors]; }
+    getWarnings() { return [...this.state.warnings]; }
+    isLoading()   { return this.state.isLoading; }
+
+    async forceRefreshTrack(trackIndex, playlist) {
+        const track = playlist[trackIndex];
+        if (!track) return;
+        track._needsProcessing = true;
+        await this._enrichTrackMetadata(track, trackIndex, playlist.length);
+        this._notify('onProgressiveUpdate', { phase: 2, priority: true, trackIndex, playlist });
     }
 }
 
-// Export
+// Helper used by createFileInput reject paths
+class AbortError extends Error {
+    constructor(msg) { super(msg); this.name = 'AbortError'; }
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = EnhancedFileLoadingManager;
 }
