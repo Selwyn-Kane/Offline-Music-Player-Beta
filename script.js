@@ -1,5 +1,6 @@
 /* ============================================
-   Ultimate Local Music Player — Clean v4.0
+   Ultimate Local Music Player — v5.0
+   Resource-safe, properly structured
    ============================================ */
 
 // ─── Audio Chain Reconnection Helper ─────────────────────────────────────────
@@ -75,16 +76,16 @@ class MusicPlayerApp {
         this.managers  = {};
         this.elements  = {};
         this.colorCache = new Map();
-        window.colorCache = this.colorCache;
 
         this.resources = {
             blobURLs:       new Set(),
-            eventListeners: [],           // { element, event, handler }
+            eventListeners: [],
             intervals:      new Set(),
             timeouts:       new Set(),
+            windowRefs:     new Set(),    // Track window.* assignments
         };
 
-        // rAF state — drives progress bar + lyrics while playing
+        // rAF state
         this._raf = {
             id:           null,
             lastProgress: 0,
@@ -94,40 +95,37 @@ class MusicPlayerApp {
         this._boundRafTick = this._rafTick.bind(this);
     }
 
-       // ── Color Extraction ──────────────────────────────────────────────────────
+    // ── Helper: Track window assignments ─────────────────────────────────────
 
-    /**
-     * Extract dominant color from album art using canvas sampling
-     */
+    _setWindowRef(key, value) {
+        window[key] = value;
+        this.resources.windowRefs.add(key);
+    }
+
+    // ── Color Extraction ──────────────────────────────────────────────────────
+
     extractAlbumColor(imageElement) {
         if (!imageElement || !imageElement.complete || !imageElement.naturalWidth) {
             return null;
         }
 
         try {
-            // Check cache first
             const cacheKey = imageElement.src;
             if (this.colorCache.has(cacheKey)) {
                 return this.colorCache.get(cacheKey);
             }
 
-            // Create canvas for color sampling
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             
-            // Use small size for performance
             const size = 50;
             canvas.width = size;
             canvas.height = size;
             
-            // Draw scaled image
             ctx.drawImage(imageElement, 0, 0, size, size);
-            
-            // Get image data
             const imageData = ctx.getImageData(0, 0, size, size);
             const data = imageData.data;
             
-            // Calculate average color (ignoring very dark/light pixels)
             let r = 0, g = 0, b = 0, count = 0;
             
             for (let i = 0; i < data.length; i += 4) {
@@ -136,7 +134,6 @@ class MusicPlayerApp {
                 const pb = data[i + 2];
                 const brightness = (pr + pg + pb) / 3;
                 
-                // Skip very dark or very light pixels
                 if (brightness > 20 && brightness < 235) {
                     r += pr;
                     g += pg;
@@ -145,15 +142,12 @@ class MusicPlayerApp {
                 }
             }
             
-            if (count === 0) {
-                return null;
-            }
+            if (count === 0) return null;
             
             r = Math.floor(r / count);
             g = Math.floor(g / count);
             b = Math.floor(b / count);
             
-            // Create color object
             const color = {
                 r, g, b,
                 rgb: `rgb(${r}, ${g}, ${b})`,
@@ -172,9 +166,7 @@ class MusicPlayerApp {
                 }
             };
             
-            // Cache the result
             this.colorCache.set(cacheKey, color);
-            
             return color;
         } catch (err) {
             this.debugLog(`Color extraction failed: ${err.message}`, 'warning');
@@ -182,18 +174,13 @@ class MusicPlayerApp {
         }
     }
 
-    /**
-     * Apply extracted color to UI elements
-     */
     applyAlbumColor(color) {
         if (!color) {
-            // Reset to defaults
             if (this.elements.metadataContainer) {
                 this.elements.metadataContainer.style.background = 'linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)';
                 this.elements.metadataContainer.style.boxShadow = '0 8px 32px rgba(220, 53, 69, 0.2)';
             }
             
-            // Reset body background only if no custom background
             if (!document.body.classList.contains('custom-bg')) {
                 document.body.style.background = '#0a0a0a';
                 document.body.style.backgroundImage = `
@@ -202,20 +189,16 @@ class MusicPlayerApp {
                 `;
             }
             
-            // Store default colors globally for lyrics
-            window.albumColors = null;
+            this._setWindowRef('albumColors', null);
             return;
         }
         
-        // Store colors globally for fullscreen lyrics
-        window.albumColors = color;
+        this._setWindowRef('albumColors', color);
 
-       // Pass colors to lyrics manager
-if (this.managers.lyrics) {
-    this.managers.lyrics.setDominantColor(color);
-}
+        if (this.managers.lyrics) {
+            this.managers.lyrics.setDominantColor(color);
+        }
         
-        // Apply gradient to metadata container
         if (this.elements.metadataContainer) {
             const gradient = `linear-gradient(135deg, ${color.darken(40)} 0%, ${color.darken(60)} 100%)`;
             this.elements.metadataContainer.style.background = gradient;
@@ -223,7 +206,6 @@ if (this.managers.lyrics) {
             this.elements.metadataContainer.style.border = `1px solid ${color.rgba(0.3)}`;
         }
         
-        // Apply to body background only if no custom background
         if (!document.body.classList.contains('custom-bg')) {
             document.body.style.background = '#0a0a0a';
             document.body.style.backgroundImage = `
@@ -251,7 +233,7 @@ if (this.managers.lyrics) {
             this.connectManagersToPerformance();
             this.setupFullscreenLyricsToggle();
             this.state.initialized = true;
-            this.debugLog('✅ Music player initialized (Clean v4.0)', 'success');
+            this.debugLog('✅ Music player initialized (v5.0)', 'success');
         } catch (err) {
             this.debugLog(`❌ Init error: ${err.message}`, 'error');
             console.error(err);
@@ -264,7 +246,6 @@ if (this.managers.lyrics) {
         const $ = id => document.getElementById(id);
 
         this.elements = {
-            // Core player
             player:           $('audio-player'),
             playPauseButton:  $('play-pause-button'),
             loadButton:       $('load-button'),
@@ -274,27 +255,19 @@ if (this.managers.lyrics) {
             shuffleButton:    $('shuffle-button'),
             loopButton:       $('loop-button'),
             clearButton:      $('clear-playlist'),
-
-            // Playlist
             playlistStatus:   $('playlist-status'),
             playlistItems:    $('playlist-items'),
             playlistSearch:   $('playlist-search'),
             jumpToCurrentBtn: $('jump-to-current'),
-
-            // Now-playing metadata
             coverArt:         $('cover-art'),
             coverPlaceholder: $('cover-placeholder'),
             trackTitle:       $('track-title'),
             trackArtist:      $('track-artist'),
             trackAlbum:       $('track-album'),
-
-            // Progress
             progressContainer:    $('custom-progress-container'),
             progressBar:          $('progress-bar'),
             currentTimeDisplay:   $('current-time'),
             durationDisplay:      $('duration'),
-
-            // Lyrics
             lyricsDisplay:              $('lyrics-display'),
             exportLyricsButton:         $('export-lyrics-button'),
             fullscreenLyricsContainer:  $('fullscreen-lyrics'),
@@ -303,8 +276,6 @@ if (this.managers.lyrics) {
             fullscreenLyricsCloseBtn:   $('lyrics-close-btn'),
             fullscreenLyricsPrevBtn:    $('lyrics-prev-btn'),
             fullscreenLyricsNextBtn:    $('lyrics-next-btn'),
-
-            // EQ
             eqBassSlider:   $('eq-bass'),
             eqMidSlider:    $('eq-mid'),
             eqTrebleSlider: $('eq-treble'),
@@ -312,63 +283,47 @@ if (this.managers.lyrics) {
             midValue:       $('mid-value'),
             trebleValue:    $('treble-value'),
             eqResetBtn:     $('eq-reset'),
-
-            // Misc
             debugToggle:       $('debug-toggle'),
             debugPanel:        $('debug-panel'),
             dropZone:          $('drop-zone'),
             metadataContainer: $('metadata-container'),
             mainContent:       $('main-content'),
-
-            // ── Sections controlled by view-mode ─────────────────────────────
-            // compact + full
-           sectionPlaylist:   $('playlist-container'),
-           sectionVolume:     $('volume-control'),
-           // full only
-           sectionLyrics:     $('lyrics-display'),
-           sectionEQ:         $('equalizer-control'),
-           sectionDropZone:   $('drop-zone'),          // alias for clarity
+            sectionPlaylist:   $('playlist-container'),
+            sectionVolume:     $('volume-control'),
+            sectionLyrics:     $('lyrics-display'),
+            sectionEQ:         $('equalizer-control'),
+            sectionDropZone:   $('drop-zone'),
         };
     }
 
     // ── View mode ─────────────────────────────────────────────────────────────
 
-    /**
-     * Apply a view mode, showing/hiding sections accordingly.
-     *
-     *  mini    → metadata window only
-     *  compact → mini + playlist + volume
-     *  full    → everything
-     */
     applyViewMode(mode) {
         if (!this.elements.mainContent) return;
 
         const compact = (mode === 'compact' || mode === 'full');
         const full    =  mode === 'full';
 
-        // Compact-and-above sections
         this._setVisible(this.elements.sectionPlaylist, compact);
         this._setVisible(this.elements.sectionVolume,   compact);
-
-        // Full-only sections
         this._setVisible(this.elements.sectionLyrics,   full);
         this._setVisible(this.elements.sectionEQ,       full);
         this._setVisible(this.elements.dropZone,        full);
 
-        // CSS class hook for any supplementary stylesheet rules
         this.elements.mainContent.classList.remove('mode-full', 'mode-compact', 'mode-mini');
         this.elements.mainContent.classList.add(`mode-${mode}`);
 
-        this.managers.performance?.setMode(mode);
+        if (this.managers.performance) {
+            this.managers.performance.setMode(mode);
+        }
         this.debugLog(`View mode → ${mode}`, 'info');
     }
 
-    /** Null-safe show/hide helper. '' restores the element's natural display. */
     _setVisible(el, visible) {
         if (el) el.style.display = visible ? '' : 'none';
     }
 
-    // ── rAF loop (progress bar + lyrics sync) ────────────────────────────────
+    // ── rAF loop ──────────────────────────────────────────────────────────────
 
     _rafStart() {
         if (this._raf.id !== null) return;
@@ -383,19 +338,16 @@ if (this.managers.lyrics) {
     }
 
     _rafTick(ts) {
-        // Hard stop conditions
         if (this.state.destroyed || !this.elements.player || this.elements.player.paused) {
             this._raf.id = null;
             return;
         }
 
-        // ── Progress bar (capped at ~15 fps, skip tiny changes) ───────────────
         if (ts - this._raf.lastProgress >= 67) {
             this._raf.lastProgress = ts;
             this._renderProgress();
         }
 
-        // ── Lyrics (capped at ~10 fps, only when lyrics section is visible) ───
         if (
             this.managers.lyrics &&
             this.state.compactMode === 'full' &&
@@ -408,8 +360,9 @@ if (this.managers.lyrics) {
         this._raf.id = requestAnimationFrame(this._boundRafTick);
     }
 
-    /** Write progress to DOM only when the value has changed meaningfully. */
     _renderProgress() {
+        if (!this.elements.player || !this.elements.progressBar) return;
+        
         const dur = this.elements.player.duration;
         if (!isFinite(dur) || dur <= 0) return;
 
@@ -419,39 +372,47 @@ if (this.managers.lyrics) {
         if (Math.abs(pct - this._raf.lastPercent) < 0.05) return;
         this._raf.lastPercent = pct;
 
-        this.elements.progressBar.style.width        = `${pct}%`;
-        this.elements.currentTimeDisplay.textContent  = this.formatTime(ct);
+        this.elements.progressBar.style.width = `${pct}%`;
+        if (this.elements.currentTimeDisplay) {
+            this.elements.currentTimeDisplay.textContent = this.formatTime(ct);
+        }
     }
 
-    // ── Manager initialisation ────────────────────────────────────────────────
+    // ── Manager initialization ────────────────────────────────────────────────
 
     async initializeManagers() {
         const log = this.debugLog.bind(this);
 
         try {
-            if (typeof createMusicPlayerWorkerManager !== 'undefined') {
-                this.managers.worker = createMusicPlayerWorkerManager(log);
-                window.workerManager = this.managers.worker;
-            }
+            // Core managers
+            this._initManager('worker', () => 
+                typeof createMusicPlayerWorkerManager !== 'undefined' 
+                    ? createMusicPlayerWorkerManager(log) 
+                    : null
+            );
 
-            if (typeof UIManager !== 'undefined') {
-                this.managers.ui = new UIManager(log);
-                window.uiManager = this.managers.ui;
-            }
+            this._initManager('ui', () => 
+                typeof UIManager !== 'undefined' 
+                    ? new UIManager(log) 
+                    : null
+            );
 
-            if (typeof PerformanceManager !== 'undefined') {
-                this.managers.performance = new PerformanceManager(log);
-                window.perfManager = this.managers.performance;
-            }
+            this._initManager('performance', () => 
+                typeof PerformanceManager !== 'undefined' 
+                    ? new PerformanceManager(log) 
+                    : null
+            );
 
-            if (typeof ImageOptimizer !== 'undefined') {
-                this.managers.imageOptimizer = new ImageOptimizer(log);
-            }
+            this._initManager('imageOptimizer', () => 
+                typeof ImageOptimizer !== 'undefined' 
+                    ? new ImageOptimizer(log) 
+                    : null
+            );
 
+            // Audio buffer manager
             if (typeof AudioBufferManager !== 'undefined') {
                 this.managers.audioBuffer = new AudioBufferManager(log);
                 this.managers.audioBuffer.setPlaylist(this.state.playlist);
-
                 this.managers.audioBuffer.setCallbacks({
                     onLoadStart: (_i, name) => {
                         if (this.elements.playlistStatus)
@@ -460,30 +421,50 @@ if (this.managers.lyrics) {
                     onLoadProgress: (_i, name, loaded, total) => {
                         if (this.elements.playlistStatus) {
                             const pct = Math.round((loaded / total) * 100);
-                            this.elements.playlistStatus.textContent =
-                                `Loading: ${name} (${pct}%)`;
+                            this.elements.playlistStatus.textContent = `Loading: ${name} (${pct}%)`;
                         }
                     },
-                    onLoadComplete: () => { /* reset by updatePlaylistStatus() */ },
+                    onLoadComplete: () => {},
                     onLoadError: (_i, name, err) => {
                         this.debugLog(`❌ Buffer load failed: ${name} — ${err.message}`, 'error');
-                        this.managers.ui?.showToast(`Failed to load: ${name}`, 'error');
+                        if (this.managers.ui) {
+                            this.managers.ui.showToast(`Failed to load: ${name}`, 'error');
+                        }
                     },
                     onMemoryWarning: pct => {
                         this.debugLog(`⚠️ Buffer memory at ${pct.toFixed(1)}%`, 'warning');
                     },
                 });
+                this._setWindowRef('audioBufferManager', this.managers.audioBuffer);
             }
 
-            if (typeof MetadataParser    !== 'undefined') this.managers.metadata      = new MetadataParser(log);
-            if (typeof VTTParser         !== 'undefined') this.managers.vtt           = new VTTParser(log);
-            if (typeof ErrorRecovery     !== 'undefined') this.managers.errorRecovery = new ErrorRecovery(log);
-            if (typeof AnalysisTextParser!== 'undefined') this.managers.analysisParser= new AnalysisTextParser(log);
-            if (typeof MetadataEditor    !== 'undefined') this.managers.metadataEditor= new MetadataEditor(log);
-            if (typeof MusicAnalyzer     !== 'undefined') this.managers.analyzer      = new MusicAnalyzer(log);
-            if (typeof CustomMetadataStore!=='undefined') this.managers.customMetadata= new CustomMetadataStore();
-            if (typeof FolderPersistence !== 'undefined') this.managers.folderPersistence = new FolderPersistence();
+            // Parsing managers
+            this._initManager('metadata', () => 
+                typeof MetadataParser !== 'undefined' ? new MetadataParser(log) : null
+            );
+            this._initManager('vtt', () => 
+                typeof VTTParser !== 'undefined' ? new VTTParser(log) : null
+            );
+            this._initManager('errorRecovery', () => 
+                typeof ErrorRecovery !== 'undefined' ? new ErrorRecovery(log) : null
+            );
+            this._initManager('analysisParser', () => 
+                typeof AnalysisTextParser !== 'undefined' ? new AnalysisTextParser(log) : null
+            );
+            this._initManager('metadataEditor', () => 
+                typeof MetadataEditor !== 'undefined' ? new MetadataEditor(log) : null
+            );
+            this._initManager('analyzer', () => 
+                typeof MusicAnalyzer !== 'undefined' ? new MusicAnalyzer(log) : null
+            );
+            this._initManager('customMetadata', () => 
+                typeof CustomMetadataStore !== 'undefined' ? new CustomMetadataStore() : null
+            );
+            this._initManager('folderPersistence', () => 
+                typeof FolderPersistence !== 'undefined' ? new FolderPersistence() : null
+            );
 
+            // File loading manager
             if (typeof EnhancedFileLoadingManager !== 'undefined') {
                 this.managers.fileLoading = new EnhancedFileLoadingManager(log);
                 this.managers.fileLoading.init({
@@ -495,16 +476,18 @@ if (this.managers.lyrics) {
                     workerManager:       this.managers.worker,
                     imageOptimizer:      this.managers.imageOptimizer,
                 });
-                window.fileLoadingManager = this.managers.fileLoading;
+                this._setWindowRef('fileLoadingManager', this.managers.fileLoading);
                 this.debugLog('✅ FileLoadingManager initialized', 'success');
             }
 
-           if (typeof CustomBackgroundManager !== 'undefined') {
-    this.managers.customBackground = new CustomBackgroundManager(log);
-    window.customBackground = this.managers.customBackground;
-    this.debugLog('✅ CustomBackgroundManager initialized', 'success');
-}
+            // Custom background
+            if (typeof CustomBackgroundManager !== 'undefined') {
+                this.managers.customBackground = new CustomBackgroundManager(log);
+                this._setWindowRef('customBackground', this.managers.customBackground);
+                this.debugLog('✅ CustomBackgroundManager initialized', 'success');
+            }
 
+            // Playlist renderer
             if (typeof EnhancedPlaylistRenderer !== 'undefined') {
                 this.managers.playlistRenderer = new EnhancedPlaylistRenderer(log);
                 this.managers.playlistRenderer.init({
@@ -518,10 +501,11 @@ if (this.managers.lyrics) {
                     onTrackClick: idx => this.loadTrack(idx),
                     onEditClick:  idx => this.editTrackMetadata(idx),
                 });
-                window.playlistRenderer = this.managers.playlistRenderer;
+                this._setWindowRef('playlistRenderer', this.managers.playlistRenderer);
                 this.debugLog('✅ PlaylistRenderer initialized', 'success');
             }
 
+            // Lyrics manager
             if (typeof LyricsManager !== 'undefined') {
                 this.managers.lyrics = new LyricsManager(log);
                 this.managers.lyrics.init({
@@ -547,7 +531,7 @@ if (this.managers.lyrics) {
                         artist: t.metadata?.artist || 'Unknown Artist',
                     };
                 };
-                window.lyricsManager = this.managers.lyrics;
+                this._setWindowRef('lyricsManager', this.managers.lyrics);
                 this.debugLog('✅ LyricsManager initialized', 'success');
             }
 
@@ -557,19 +541,34 @@ if (this.managers.lyrics) {
         }
     }
 
+    _initManager(key, factory) {
+        try {
+            const manager = factory();
+            if (manager) {
+                this.managers[key] = manager;
+                this._setWindowRef(`${key}Manager`, manager);
+            }
+        } catch (err) {
+            this.debugLog(`⚠️ ${key} init failed: ${err.message}`, 'warning');
+        }
+    }
+
     connectManagersToPerformance() {
         const pm = this.managers.performance;
-        if (!pm) { this.debugLog('⚠️ No performance manager', 'warning'); return; }
+        if (!pm) { 
+            this.debugLog('⚠️ No performance manager', 'warning'); 
+            return; 
+        }
 
         if (this.managers.audioBuffer)  pm.connectManager('audioBuffer',  this.managers.audioBuffer);
-        if (this.managers.lyrics)        pm.connectManager('lyrics',        this.managers.lyrics);
+        if (this.managers.lyrics)       pm.connectManager('lyrics',       this.managers.lyrics);
         if (this.managers.audioPipeline) pm.connectManager('audioPipeline', this.managers.audioPipeline);
-        if (this.managers.ui)            pm.connectManager('ui',            this.managers.ui);
+        if (this.managers.ui)           pm.connectManager('ui',           this.managers.ui);
 
         this.debugLog('✅ Managers connected to performance manager', 'success');
     }
 
-    // ── Audio initialisation ──────────────────────────────────────────────────
+    // ── Audio initialization ──────────────────────────────────────────────────
 
     initializeAudio() {
         try {
@@ -577,12 +576,12 @@ if (this.managers.lyrics) {
                 this.managers.audioPipeline = new AudioPipeline(this.debugLog.bind(this));
                 this.managers.audioPipeline.init(this.elements.player);
 
-                window.audioPipeline      = this.managers.audioPipeline;
-                window.audioContext       = this.managers.audioPipeline.audioContext;
-                window.sharedAudioSource  = this.managers.audioPipeline.audioSource;
-                window.sharedBassFilter   = this.managers.audioPipeline.bassFilter;
-                window.sharedMidFilter    = this.managers.audioPipeline.midFilter;
-                window.sharedTrebleFilter = this.managers.audioPipeline.trebleFilter;
+                this._setWindowRef('audioPipeline',      this.managers.audioPipeline);
+                this._setWindowRef('audioContext',       this.managers.audioPipeline.audioContext);
+                this._setWindowRef('sharedAudioSource',  this.managers.audioPipeline.audioSource);
+                this._setWindowRef('sharedBassFilter',   this.managers.audioPipeline.bassFilter);
+                this._setWindowRef('sharedMidFilter',    this.managers.audioPipeline.midFilter);
+                this._setWindowRef('sharedTrebleFilter', this.managers.audioPipeline.trebleFilter);
 
                 document.dispatchEvent(new CustomEvent('audioContextReady'));
                 this.debugLog('✅ AudioPipeline initialized', 'success');
@@ -593,7 +592,7 @@ if (this.managers.lyrics) {
                 this.managers.volume = new VolumeControl(
                     this.elements.player, this.debugLog.bind(this)
                 );
-                window.volumeControl = this.managers.volume;
+                this._setWindowRef('volumeControl', this.managers.volume);
             }
 
             if (typeof CrossfadeManager !== 'undefined') {
@@ -623,7 +622,7 @@ if (this.managers.lyrics) {
                     this.managers.audioPipeline.trebleFilter,
                     log
                 );
-                window.audioPresetsManager = this.managers.audioPresets;
+                this._setWindowRef('audioPresetsManager', this.managers.audioPresets);
 
                 this.populateEQPresetDropdown();
                 this.setupEQPresetSelector();
@@ -633,7 +632,7 @@ if (this.managers.lyrics) {
 
             if (typeof AutoEQManager !== 'undefined' && this.managers.audioPresets) {
                 this.managers.autoEQ = new AutoEQManager(this.managers.audioPresets, log);
-                window.autoEQManager = this.managers.autoEQ;
+                this._setWindowRef('autoEQManager', this.managers.autoEQ);
                 this.debugLog('✅ AutoEQManager initialized', 'success');
             }
         } catch (err) {
@@ -668,7 +667,7 @@ if (this.managers.lyrics) {
 
         const handler = e => {
             const id = e.target.value;
-            if (!id) return;
+            if (!id || !this.managers.audioPresets) return;
 
             const track    = this.state.playlist[this.state.currentTrackIndex];
             const analysis = track?.analysis ?? null;
@@ -680,7 +679,8 @@ if (this.managers.lyrics) {
                 const btn = document.getElementById('auto-eq-button');
                 if (btn) {
                     btn.classList.remove('active');
-                    btn.querySelector('.sidebar-label').textContent = 'Auto-EQ Off';
+                    const label = btn.querySelector('.sidebar-label');
+                    if (label) label.textContent = 'Auto-EQ Off';
                 }
             }
             this.debugLog(`🎛️ Applied preset: ${id}`, 'success');
@@ -713,25 +713,32 @@ if (this.managers.lyrics) {
         if (localStorage.getItem('autoEQEnabled') === 'true') {
             this.managers.autoEQ.setEnabled(true);
             btn.classList.add('active');
-            btn.querySelector('.sidebar-label').textContent = 'Auto-EQ On';
+            const label = btn.querySelector('.sidebar-label');
+            if (label) label.textContent = 'Auto-EQ On';
         }
         btn.disabled = false;
 
         const handler = () => {
+            if (!this.managers.autoEQ) return;
             const on = this.managers.autoEQ.toggle();
             btn.classList.toggle('active', on);
-            btn.querySelector('.sidebar-label').textContent = on ? 'Auto-EQ On' : 'Auto-EQ Off';
+            const label = btn.querySelector('.sidebar-label');
+            if (label) label.textContent = on ? 'Auto-EQ On' : 'Auto-EQ Off';
             localStorage.setItem('autoEQEnabled', on.toString());
 
             if (on && this.state.currentTrackIndex !== -1) {
                 const t = this.state.playlist[this.state.currentTrackIndex];
                 if (t) this.managers.autoEQ.applyAutoEQ(t);
             } else if (!on) {
-                this.managers.audioPresets.reset();
+                if (this.managers.audioPresets) {
+                    this.managers.audioPresets.reset();
+                }
                 const dd = document.getElementById('eq-preset-select');
                 if (dd) dd.value = 'flat';
             }
-            this.managers.ui?.showToast(`Auto-EQ ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
+            if (this.managers.ui) {
+                this.managers.ui.showToast(`Auto-EQ ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
+            }
         };
         btn.addEventListener('click', handler);
         this.resources.eventListeners.push({ element: btn, event: 'click', handler });
@@ -743,15 +750,20 @@ if (this.managers.lyrics) {
 
         if (this.managers.volume.isBoostEnabled()) {
             btn.classList.add('active');
-            btn.querySelector('.sidebar-label').textContent = 'Boost On';
+            const label = btn.querySelector('.sidebar-label');
+            if (label) label.textContent = 'Boost On';
         }
 
         const handler = () => {
+            if (!this.managers.volume) return;
             const on = !this.managers.volume.isBoostEnabled();
             this.managers.volume.setBoost(on, 1.5);
             btn.classList.toggle('active', on);
-            btn.querySelector('.sidebar-label').textContent = on ? 'Boost On' : 'Boost Off';
-            this.managers.ui?.showToast(`Volume Boost ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
+            const label = btn.querySelector('.sidebar-label');
+            if (label) label.textContent = on ? 'Boost On' : 'Boost Off';
+            if (this.managers.ui) {
+                this.managers.ui.showToast(`Volume Boost ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
+            }
         };
         btn.addEventListener('click', handler);
         this.resources.eventListeners.push({ element: btn, event: 'click', handler });
@@ -764,17 +776,22 @@ if (this.managers.lyrics) {
         if (localStorage.getItem('crossfadeEnabled') === 'true') {
             this.managers.crossfade.setEnabled(true);
             btn.classList.add('active');
-            btn.querySelector('.sidebar-label').textContent = 'Crossfade On';
+            const label = btn.querySelector('.sidebar-label');
+            if (label) label.textContent = 'Crossfade On';
         }
         btn.disabled = false;
 
         const handler = () => {
+            if (!this.managers.crossfade) return;
             const on = !this.managers.crossfade.enabled;
             this.managers.crossfade.setEnabled(on);
             btn.classList.toggle('active', on);
-            btn.querySelector('.sidebar-label').textContent = on ? 'Crossfade On' : 'Crossfade Off';
+            const label = btn.querySelector('.sidebar-label');
+            if (label) label.textContent = on ? 'Crossfade On' : 'Crossfade Off';
             localStorage.setItem('crossfadeEnabled', on.toString());
-            this.managers.ui?.showToast(`Crossfade ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
+            if (this.managers.ui) {
+                this.managers.ui.showToast(`Crossfade ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
+            }
         };
         btn.addEventListener('click', handler);
         this.resources.eventListeners.push({ element: btn, event: 'click', handler });
@@ -787,7 +804,9 @@ if (this.managers.lyrics) {
         const handler = () => {
             this.state.debugMode = !this.state.debugMode;
             btn.classList.toggle('active', this.state.debugMode);
-            this.elements.debugPanel?.classList.toggle('visible', this.state.debugMode);
+            if (this.elements.debugPanel) {
+                this.elements.debugPanel.classList.toggle('visible', this.state.debugMode);
+            }
             this.debugLog(`Debug mode: ${this.state.debugMode ? 'ON' : 'OFF'}`, 'info');
         };
         btn.addEventListener('click', handler);
@@ -810,8 +829,11 @@ if (this.managers.lyrics) {
             this.state.compactMode = next;
             this.applyViewMode(next);
             localStorage.setItem('compactMode', next);
-            btn.querySelector('.sidebar-label').textContent = NAMES[next];
-            this.managers.ui?.showToast(`View: ${NAMES[next]}`, 'info');
+            const label = btn.querySelector('.sidebar-label');
+            if (label) label.textContent = NAMES[next];
+            if (this.managers.ui) {
+                this.managers.ui.showToast(`View: ${NAMES[next]}`, 'info');
+            }
         };
         btn.addEventListener('click', handler);
         this.resources.eventListeners.push({ element: btn, event: 'click', handler });
@@ -862,9 +884,9 @@ if (this.managers.lyrics) {
 
         const handler = () => {
             if (this.managers.customBackground) {
-    this.managers.customBackground.showModal();
-            } else {
-                this.managers.ui?.showToast('Background picker not available', 'error');
+                this.managers.customBackground.showModal();
+            } else if (this.managers.ui) {
+                this.managers.ui.showToast('Background picker not available', 'error');
             }
         };
         btn.addEventListener('click', handler);
@@ -879,99 +901,106 @@ if (this.managers.lyrics) {
             if (!confirm('Clear all cached data? This will not delete your playlist.')) return;
             try {
                 this.revokeBlobURLs();
-                this.managers.audioBuffer?.clearAllBuffers();
-                this.colorCache?.clear();
+                if (this.managers.audioBuffer) {
+                    this.managers.audioBuffer.clearAllBuffers();
+                }
+                this.colorCache.clear();
                 if ('caches' in window) {
                     const names = await caches.keys();
                     await Promise.all(names.map(n => caches.delete(n)));
                 }
-                this.managers.ui?.showToast('Cache cleared successfully', 'success');
+                if (this.managers.ui) {
+                    this.managers.ui.showToast('Cache cleared successfully', 'success');
+                }
                 this.debugLog('✅ Cache cleared', 'success');
             } catch (err) {
                 this.debugLog(`Cache clear error: ${err.message}`, 'error');
-                this.managers.ui?.showToast('Error clearing cache', 'error');
+                if (this.managers.ui) {
+                    this.managers.ui.showToast('Error clearing cache', 'error');
+                }
             }
         };
         btn.addEventListener('click', handler);
         this.resources.eventListeners.push({ element: btn, event: 'click', handler });
     }
 
-           setupDeepAnalysisButton() {
-    const btn = document.getElementById('deep-analysis-btn');
-    if (!btn) return;
-    
-    const handler = () => {
-        window.open('deep-music-analysis.html', '_blank', 'width=1200,height=800');
-    };
-    btn.addEventListener('click', handler);
-    this.resources.eventListeners.push({ element: btn, event: 'click', handler });
-}
-
-setupLyricsFetcherButton() {
-    const btn = document.getElementById('auto-lyrics-btn');
-    if (!btn) return;
-    
-    const handler = () => {
-        window.open('lyrics-fetcher.html', '_blank', 'width=1000,height=700');
-    };
-    btn.addEventListener('click', handler);
-    this.resources.eventListeners.push({ element: btn, event: 'click', handler });
-}
-
-   setupFullscreenLyricsToggle() {
-    const toggleBtn = document.getElementById('fullscreen-lyrics-toggle');
-    const fullscreenContainer = document.getElementById('fullscreen-lyrics');
-    
-    if (!toggleBtn || !fullscreenContainer || !this.managers.lyrics) return;
-    
-    const handler = () => {
-        const isHidden = fullscreenContainer.classList.contains('fullscreen-lyrics-hidden');
+    setupDeepAnalysisButton() {
+        const btn = document.getElementById('deep-analysis-btn');
+        if (!btn) return;
         
-        if (isHidden) {
-            // Opening fullscreen
-            fullscreenContainer.classList.remove('fullscreen-lyrics-hidden');
-            fullscreenContainer.classList.add('show');
+        const handler = () => {
+            window.open('deep-music-analysis.html', '_blank', 'width=1200,height=800');
+        };
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+    }
+
+    setupLyricsFetcherButton() {
+        const btn = document.getElementById('auto-lyrics-btn');
+        if (!btn) return;
+        
+        const handler = () => {
+            window.open('lyrics-fetcher.html', '_blank', 'width=1000,height=700');
+        };
+        btn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+    }
+
+    setupFullscreenLyricsToggle() {
+        const toggleBtn = document.getElementById('fullscreen-lyrics-toggle');
+        const fullscreenContainer = document.getElementById('fullscreen-lyrics');
+        
+        if (!toggleBtn || !fullscreenContainer || !this.managers.lyrics) return;
+        
+        const handler = () => {
+            const isHidden = fullscreenContainer.classList.contains('fullscreen-lyrics-hidden');
             
-            // If main lyrics display is hidden (compact/mini mode), enable syncing for fullscreen
-            const mainLyricsHidden = this.state.compactMode !== 'full';
-            if (mainLyricsHidden && this.managers.lyrics) {
-                this.managers.lyrics._wasAutoSyncDisabled = !this.managers.lyrics.autoSync;
-                this.managers.lyrics.enableAutoSync?.();
-            }
-        } else {
-            // Closing fullscreen
-            fullscreenContainer.classList.add('fullscreen-lyrics-hidden');
-            fullscreenContainer.classList.remove('show');
-            
-            // If we enabled sync when opening and main display is still hidden, disable it again
-            const mainLyricsHidden = this.state.compactMode !== 'full';
-            if (mainLyricsHidden && this.managers.lyrics?._wasAutoSyncDisabled) {
-                this.managers.lyrics.disableAutoSync?.();
-                delete this.managers.lyrics._wasAutoSyncDisabled;
-            }
-        }
-    };
-    
-    toggleBtn.addEventListener('click', handler);
-    this.resources.eventListeners.push({ element: toggleBtn, event: 'click', handler });
-    
-    // Also handle the close button inside fullscreen
-    const closeBtn = document.getElementById('lyrics-close-btn');
-    if (closeBtn) {
-        const closeHandler = () => {
-            fullscreenContainer.classList.add('fullscreen-lyrics-hidden');
-            fullscreenContainer.classList.remove('show');
-            
-            const mainLyricsHidden = this.state.compactMode !== 'full';
-            if (mainLyricsHidden && this.managers.lyrics?._wasAutoSyncDisabled) {
-                this.managers.lyrics.disableAutoSync?.();
-                delete this.managers.lyrics._wasAutoSyncDisabled;
+            if (isHidden) {
+                fullscreenContainer.classList.remove('fullscreen-lyrics-hidden');
+                fullscreenContainer.classList.add('show');
+                
+                const mainLyricsHidden = this.state.compactMode !== 'full';
+                if (mainLyricsHidden && this.managers.lyrics) {
+                    this.managers.lyrics._wasAutoSyncDisabled = !this.managers.lyrics.autoSync;
+                    if (this.managers.lyrics.enableAutoSync) {
+                        this.managers.lyrics.enableAutoSync();
+                    }
+                }
+            } else {
+                fullscreenContainer.classList.add('fullscreen-lyrics-hidden');
+                fullscreenContainer.classList.remove('show');
+                
+                const mainLyricsHidden = this.state.compactMode !== 'full';
+                if (mainLyricsHidden && this.managers.lyrics?._wasAutoSyncDisabled) {
+                    if (this.managers.lyrics.disableAutoSync) {
+                        this.managers.lyrics.disableAutoSync();
+                    }
+                    delete this.managers.lyrics._wasAutoSyncDisabled;
+                }
             }
         };
-        closeBtn.addEventListener('click', closeHandler);
-        this.resources.eventListeners.push({ element: closeBtn, event: 'click', handler: closeHandler });
+        
+        toggleBtn.addEventListener('click', handler);
+        this.resources.eventListeners.push({ element: toggleBtn, event: 'click', handler });
+        
+        const closeBtn = document.getElementById('lyrics-close-btn');
+        if (closeBtn) {
+            const closeHandler = () => {
+                fullscreenContainer.classList.add('fullscreen-lyrics-hidden');
+                fullscreenContainer.classList.remove('show');
+                
+                const mainLyricsHidden = this.state.compactMode !== 'full';
+                if (mainLyricsHidden && this.managers.lyrics?._wasAutoSyncDisabled) {
+                    if (this.managers.lyrics.disableAutoSync) {
+                        this.managers.lyrics.disableAutoSync();
+                    }
+                    delete this.managers.lyrics._wasAutoSyncDisabled;
+                }
+            };
+            closeBtn.addEventListener('click', closeHandler);
+            this.resources.eventListeners.push({ element: closeBtn, event: 'click', handler: closeHandler });
+        }
     }
-}
 
     // ── Keyboard shortcuts ────────────────────────────────────────────────────
 
@@ -984,30 +1013,44 @@ setupLyricsFetcherButton() {
                     e.preventDefault(); this.togglePlayPause(); break;
 
                 case 'arrowright':
-    e.preventDefault();
-    if (e.shiftKey) {
-        this.seekForward();
-    } else {
-        this.playNext();
-    }
-    break;
+                    e.preventDefault();
+                    if (e.shiftKey) {
+                        this.seekForward();
+                    } else {
+                        this.playNext();
+                    }
+                    break;
 
-case 'arrowleft':
-    e.preventDefault();
-    if (e.shiftKey) {
-        this.seekBackward();
-    } else {
-        this.playPrevious();
-    }
-    break;
+                case 'arrowleft':
+                    e.preventDefault();
+                    if (e.shiftKey) {
+                        this.seekBackward();
+                    } else {
+                        this.playPrevious();
+                    }
+                    break;
 
                 case 'arrowup':
-                    e.preventDefault(); this.managers.volume?.increaseVolume(0.1); break;
+                    e.preventDefault(); 
+                    if (this.managers.volume) {
+                        this.managers.volume.increaseVolume(0.1);
+                    }
+                    break;
 
                 case 'arrowdown':
-                    e.preventDefault(); this.managers.volume?.decreaseVolume(0.1); break;
+                    e.preventDefault(); 
+                    if (this.managers.volume) {
+                        this.managers.volume.decreaseVolume(0.1);
+                    }
+                    break;
 
-                case 'm': e.preventDefault(); this.managers.volume?.toggleMute(); break;
+                case 'm': 
+                    e.preventDefault(); 
+                    if (this.managers.volume) {
+                        this.managers.volume.toggleMute();
+                    }
+                    break;
+                    
                 case 's': e.preventDefault(); this.toggleShuffle(); break;
                 case 'l': e.preventDefault(); this.cycleLoopMode(); break;
 
@@ -1020,10 +1063,13 @@ case 'arrowleft':
                 case 'd':
                     e.preventDefault();
                     this.state.debugMode = !this.state.debugMode;
-                    document.getElementById('debug-toggle')
-                        ?.classList.toggle('active', this.state.debugMode);
-                    this.elements.debugPanel
-                        ?.classList.toggle('visible', this.state.debugMode);
+                    const debugToggle = document.getElementById('debug-toggle');
+                    if (debugToggle) {
+                        debugToggle.classList.toggle('active', this.state.debugMode);
+                    }
+                    if (this.elements.debugPanel) {
+                        this.elements.debugPanel.classList.toggle('visible', this.state.debugMode);
+                    }
                     break;
 
                 case 'c': {
@@ -1090,22 +1136,18 @@ case 'arrowleft':
     // ── Event listeners ───────────────────────────────────────────────────────
 
     setupEventListeners() {
-        // Convenience wire helper: attaches, tracks for cleanup, checks null
         const wire = (el, event, handler, opts) => {
             if (!el) return;
             el.addEventListener(event, handler, opts);
             this.resources.eventListeners.push({ element: el, event, handler });
         };
 
-        // ── Audio element events ─────────────────────────────────────────────
-        // NOTE: 'timeupdate' intentionally omitted — rAF loop handles DOM updates
         wire(this.elements.player, 'ended',          () => this.handleTrackEnded());
         wire(this.elements.player, 'loadedmetadata', () => this.handleMetadataLoaded());
         wire(this.elements.player, 'error',          e  => this.handlePlayerError(e));
         wire(this.elements.player, 'play',           () => this.handlePlay());
         wire(this.elements.player, 'pause',          () => this.handlePause());
 
-        // seeked: update progress once when user seeks while paused
         wire(this.elements.player, 'seeked', () => {
             if (this.elements.player.paused) {
                 this._renderProgress();
@@ -1115,7 +1157,6 @@ case 'arrowleft':
             }
         });
 
-        // ── Transport buttons ─────────────────────────────────────────────────
         wire(this.elements.loadButton,     'click', () => this.loadFiles());
         wire(this.elements.folderButton,   'click', () => this.loadFromFolder());
         wire(this.elements.prevButton,     'click', () => this.playPrevious());
@@ -1125,11 +1166,10 @@ case 'arrowleft':
         wire(this.elements.loopButton,     'click', () => this.cycleLoopMode());
         wire(this.elements.clearButton,    'click', () => this.clearPlaylist());
 
-        // ── Page visibility — stop rAF when tab is hidden ─────────────────────
         wire(document, 'visibilitychange', () => {
             if (document.hidden) {
                 this._rafStop();
-            } else if (!this.elements.player?.paused) {
+            } else if (this.elements.player && !this.elements.player.paused) {
                 this._rafStart();
             }
         });
@@ -1141,10 +1181,11 @@ case 'arrowleft':
     }
 
     setupProgressBar() {
+        if (!this.elements.progressContainer) return;
+        
         let seekDebounce = null;
 
         const mousedownHandler = () => {
-            // Cancel any pending resume debounce
             if (seekDebounce !== null) {
                 clearTimeout(seekDebounce);
                 this.resources.timeouts.delete(seekDebounce);
@@ -1152,13 +1193,15 @@ case 'arrowleft':
             }
 
             this.state.isSeekingProg = true;
-            const wasPlaying = !this.elements.player.paused;
-            this.elements.player.pause(); // also triggers _rafStop via 'pause' event
+            const wasPlaying = this.elements.player && !this.elements.player.paused;
+            if (this.elements.player) {
+                this.elements.player.pause();
+            }
 
             seekDebounce = setTimeout(() => {
                 this.resources.timeouts.delete(seekDebounce);
                 seekDebounce = null;
-                if (wasPlaying) {
+                if (wasPlaying && this.elements.player) {
                     this.elements.player.play()
                         .catch(e => this.debugLog(`Resume error: ${e.message}`, 'error'));
                 }
@@ -1176,14 +1219,13 @@ case 'arrowleft':
             if (!this.state.isSeekingProg) return;
             this.state.isSeekingProg = false;
             const newTime = this._scrubProgress(e);
-            if (newTime !== null && isFinite(newTime)) {
+            if (newTime !== null && isFinite(newTime) && this.elements.player) {
                 try { this.elements.player.currentTime = newTime; }
                 catch (err) { this.debugLog(`Seek failed: ${err.message}`, 'error'); }
             }
         };
 
         this.elements.progressContainer.addEventListener('mousedown', mousedownHandler);
-        // passive: true — we never call preventDefault in these handlers
         document.addEventListener('mousemove', mousemoveHandler, { passive: true });
         document.addEventListener('mouseup',   mouseupHandler,   { passive: true });
 
@@ -1194,15 +1236,20 @@ case 'arrowleft':
         );
     }
 
-    /** Compute and apply a scrub position from a mouse event. Returns new time. */
     _scrubProgress(e) {
+        if (!this.elements.progressContainer || !this.elements.player) return null;
+        
         const rect    = this.elements.progressContainer.getBoundingClientRect();
         const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         const newTime = percent * this.elements.player.duration;
 
-        this.elements.progressBar.style.width        = `${percent * 100}%`;
-        this.elements.currentTimeDisplay.textContent  = this.formatTime(newTime);
-        this._raf.lastPercent = percent * 100; // keep rAF in sync to avoid a jump
+        if (this.elements.progressBar) {
+            this.elements.progressBar.style.width = `${percent * 100}%`;
+        }
+        if (this.elements.currentTimeDisplay) {
+            this.elements.currentTimeDisplay.textContent = this.formatTime(newTime);
+        }
+        this._raf.lastPercent = percent * 100;
 
         return newTime;
     }
@@ -1237,7 +1284,10 @@ case 'arrowleft':
     async loadFiles() {
         try {
             if (!this.managers.fileLoading) {
-                this.managers.ui?.showToast('File loading not available', 'error'); return;
+                if (this.managers.ui) {
+                    this.managers.ui.showToast('File loading not available', 'error');
+                }
+                return;
             }
             const result = await this.managers.fileLoading.createFileInput();
             if (result?.success && result.playlist.length > 0) {
@@ -1251,7 +1301,10 @@ case 'arrowleft':
     async loadFromFolder() {
         try {
             if (!('showDirectoryPicker' in window)) {
-                this.managers.ui?.showToast('Folder selection not supported', 'error'); return;
+                if (this.managers.ui) {
+                    this.managers.ui.showToast('Folder selection not supported', 'error');
+                }
+                return;
             }
             const dir = await window.showDirectoryPicker({ mode: 'read', startIn: 'music' });
             this.state.folderHandle = dir;
@@ -1275,14 +1328,17 @@ case 'arrowleft':
         }
     }
 
-    /** Shared logic after any successful file load. */
     _applyNewPlaylist(playlist) {
         this.state.playlist          = playlist;
         this.state.currentTrackIndex = -1;
-        this.managers.audioBuffer?.setPlaylist(this.state.playlist);
+        if (this.managers.audioBuffer) {
+            this.managers.audioBuffer.setPlaylist(this.state.playlist);
+        }
         this.updatePlaylist();
         this.savePlaylistToStorage();
-        this.managers.ui?.showToast(`Loaded ${playlist.length} tracks`, 'success');
+        if (this.managers.ui) {
+            this.managers.ui.showToast(`Loaded ${playlist.length} tracks`, 'success');
+        }
         this.startBackgroundAnalysis();
         this.loadTrack(0);
     }
@@ -1293,7 +1349,9 @@ case 'arrowleft':
         if (index < 0 || index >= this.state.playlist.length) return;
 
         this.cleanupCurrentTrack();
-        this.managers.performance?.cleanupForTrackChange();
+        if (this.managers.performance) {
+            this.managers.performance.cleanupForTrackChange();
+        }
 
         this.state.currentTrackIndex = index;
         const track = this.state.playlist[index];
@@ -1304,7 +1362,9 @@ case 'arrowleft':
             this.displayMetadata(track.metadata);
         } else {
             this.clearMetadata();
-            this.elements.trackTitle.textContent = track.fileName;
+            if (this.elements.trackTitle) {
+                this.elements.trackTitle.textContent = track.fileName;
+            }
         }
 
         // Per-track volume memory
@@ -1325,7 +1385,7 @@ case 'arrowleft':
             const capturedIndex = index;
 
             this.managers.audioBuffer.getBuffer(capturedIndex).then(buffer => {
-                if (this.state.currentTrackIndex !== capturedIndex) return;
+                if (this.state.currentTrackIndex !== capturedIndex || !this.elements.player) return;
 
                 const url = URL.createObjectURL(new Blob([buffer], { type: 'audio/mpeg' }));
                 this.resources.blobURLs.add(url);
@@ -1353,11 +1413,13 @@ case 'arrowleft':
             } catch {
                 this.managers.lyrics.clearLyrics();
             }
-        } else {
-            this.managers.lyrics?.clearLyrics();
+        } else if (this.managers.lyrics) {
+            this.managers.lyrics.clearLyrics();
         }
 
-        this.managers.playlistRenderer?.updateHighlight(this.state.currentTrackIndex);
+        if (this.managers.playlistRenderer) {
+            this.managers.playlistRenderer.updateHighlight(this.state.currentTrackIndex);
+        }
 
         if (this.elements.prevButton) this.elements.prevButton.disabled = false;
         if (this.elements.nextButton) this.elements.nextButton.disabled = false;
@@ -1366,32 +1428,36 @@ case 'arrowleft':
     }
 
     _playFromURL(track) {
-    // If track has a file object, create a fresh blob URL from it
-    // This handles cases where the original audioURL blob was revoked
-    if (track.file) {
-        // Revoke old URL if it's a blob
-        if (track.audioURL?.startsWith('blob:')) {
-            try {
-                URL.revokeObjectURL(track.audioURL);
-            } catch (_) {}
+        if (!this.elements.player) return;
+        
+        // Create fresh blob URL from file if available
+        if (track.file) {
+            if (track.audioURL?.startsWith('blob:')) {
+                try {
+                    URL.revokeObjectURL(track.audioURL);
+                } catch (_) {}
+            }
+            
+            const newURL = URL.createObjectURL(track.file);
+            track.audioURL = newURL;
+            this.resources.blobURLs.add(newURL);
         }
         
-        // Create fresh blob URL from file
-        const newURL = URL.createObjectURL(track.file);
-        track.audioURL = newURL;
-        this.resources.blobURLs.add(newURL);
+        if (!track.audioURL) {
+            this.debugLog('No audio URL available for track', 'error');
+            return;
+        }
+        
+        this.elements.player.src = track.audioURL;
+        this.elements.player.load();
+        this.elements.player.play()
+            .catch(e => this.debugLog(`Playback failed: ${e.message}`, 'warning'));
     }
-    
-    this.elements.player.src = track.audioURL;
-    this.elements.player.load();
-    this.elements.player.play()
-        .catch(e => this.debugLog(`Playback failed: ${e.message}`, 'warning'));
-}
 
     // ── Resource management ───────────────────────────────────────────────────
 
     cleanupCurrentTrack() {
-        if (this.elements.player.src?.startsWith('blob:')) {
+        if (this.elements.player?.src?.startsWith('blob:')) {
             this.revokeBlobURL(this.elements.player.src);
         }
     }
@@ -1417,51 +1483,76 @@ case 'arrowleft':
     // ── Metadata display ──────────────────────────────────────────────────────
 
     displayMetadata(metadata) {
-    if (!metadata) return;
+        if (!metadata) return;
 
-    this.elements.trackTitle.textContent  = metadata.title  || 'Unknown Title';
-    this.elements.trackArtist.textContent = metadata.artist || 'Unknown Artist';
-    this.elements.trackAlbum.textContent  = metadata.album  || 'Unknown Album';
+        if (this.elements.trackTitle) {
+            this.elements.trackTitle.textContent  = metadata.title  || 'Unknown Title';
+        }
+        if (this.elements.trackArtist) {
+            this.elements.trackArtist.textContent = metadata.artist || 'Unknown Artist';
+        }
+        if (this.elements.trackAlbum) {
+            this.elements.trackAlbum.textContent  = metadata.album  || 'Unknown Album';
+        }
 
-    if (metadata.image) {
-        this.elements.coverArt.src    = metadata.image;
-        this.elements.coverArt.onload = () => {
-            this.elements.coverArt.classList.add('loaded');
-            this.elements.coverPlaceholder.style.display = 'none';
-            
-            // Extract and apply color from album art
-            const color = this.extractAlbumColor(this.elements.coverArt);
-            this.applyAlbumColor(color);
-        };
-        this.elements.coverArt.onerror = () => {
+        if (metadata.image && this.elements.coverArt) {
+            this.elements.coverArt.src = metadata.image;
+            this.elements.coverArt.onload = () => {
+                this.elements.coverArt.classList.add('loaded');
+                if (this.elements.coverPlaceholder) {
+                    this.elements.coverPlaceholder.style.display = 'none';
+                }
+                
+                const color = this.extractAlbumColor(this.elements.coverArt);
+                this.applyAlbumColor(color);
+            };
+            this.elements.coverArt.onerror = () => {
+                this.elements.coverArt.src = '';
+                this.elements.coverArt.classList.remove('loaded');
+                if (this.elements.coverPlaceholder) {
+                    this.elements.coverPlaceholder.style.display = 'flex';
+                }
+                this.applyAlbumColor(null);
+            };
+        } else if (this.elements.coverArt) {
             this.elements.coverArt.src = '';
             this.elements.coverArt.classList.remove('loaded');
-            this.elements.coverPlaceholder.style.display = 'flex';
-            this.applyAlbumColor(null); // Reset to default colors
-        };
-    } else {
-        this.elements.coverArt.src = '';
-        this.elements.coverArt.classList.remove('loaded');
-        this.elements.coverPlaceholder.style.display = 'flex';
-        this.applyAlbumColor(null); // Reset to default colors
+            if (this.elements.coverPlaceholder) {
+                this.elements.coverPlaceholder.style.display = 'flex';
+            }
+            this.applyAlbumColor(null);
+        }
     }
-}
 
     clearMetadata() {
-        this.elements.trackTitle.textContent  = 'No track loaded';
-        this.elements.trackArtist.textContent = '--';
-        this.elements.trackAlbum.textContent  = '--';
-        this.elements.coverArt.src = '';
-        this.elements.coverArt.classList.remove('loaded');
-        this.elements.coverPlaceholder.style.display = 'flex';
-        this.managers.lyrics?.clearLyrics();
+        if (this.elements.trackTitle) {
+            this.elements.trackTitle.textContent  = 'No track loaded';
+        }
+        if (this.elements.trackArtist) {
+            this.elements.trackArtist.textContent = '--';
+        }
+        if (this.elements.trackAlbum) {
+            this.elements.trackAlbum.textContent  = '--';
+        }
+        if (this.elements.coverArt) {
+            this.elements.coverArt.src = '';
+            this.elements.coverArt.classList.remove('loaded');
+        }
+        if (this.elements.coverPlaceholder) {
+            this.elements.coverPlaceholder.style.display = 'flex';
+        }
+        if (this.managers.lyrics) {
+            this.managers.lyrics.clearLyrics();
+        }
         this.applyAlbumColor(null);
     }
 
     // ── Playlist helpers ──────────────────────────────────────────────────────
 
     updatePlaylist() {
-        this.managers.playlistRenderer?.setPlaylist(this.state.playlist, this.state.currentTrackIndex);
+        if (this.managers.playlistRenderer) {
+            this.managers.playlistRenderer.setPlaylist(this.state.playlist, this.state.currentTrackIndex);
+        }
         this.updatePlaylistStatus();
     }
 
@@ -1487,91 +1578,93 @@ case 'arrowleft':
             artwork: meta.image  ? [{ src: meta.image, sizes: '512x512', type: 'image/png' }] : [],
         });
 
-        window.backgroundAudioHandler?.updateMediaSessionMetadata();
+        if (window.backgroundAudioHandler) {
+            window.backgroundAudioHandler.updateMediaSessionMetadata();
+        }
     }
 
     // ── Playback controls ─────────────────────────────────────────────────────
 
     playNext() {
-    if (this.state.playlist.length === 0) return;
+        if (this.state.playlist.length === 0) return;
 
-    if (this.state.currentTrackIndex !== -1 && this.managers.volume) {
-        const t  = this.state.playlist[this.state.currentTrackIndex];
-        const id = `${t.metadata?.artist || 'Unknown'}_${t.metadata?.title || t.fileName}`;
-        this.managers.volume.rememberTrackVolume(id, this.managers.volume.getVolume());
-    }
+        if (this.state.currentTrackIndex !== -1 && this.managers.volume) {
+            const t  = this.state.playlist[this.state.currentTrackIndex];
+            const id = `${t.metadata?.artist || 'Unknown'}_${t.metadata?.title || t.fileName}`;
+            this.managers.volume.rememberTrackVolume(id, this.managers.volume.getVolume());
+        }
 
-    let next;
-    if (this.state.isShuffled && this.state.shuffledPlaylist.length > 0) {
-        // Find current position in shuffled playlist
-        const currentPos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
-        const nextPos = currentPos + 1;
-        
-        if (nextPos >= this.state.shuffledPlaylist.length) {
-            if (this.state.loopMode === 'all') {
-                next = this.state.shuffledPlaylist[0];
+        let next;
+        if (this.state.isShuffled && this.state.shuffledPlaylist.length > 0) {
+            const currentPos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
+            const nextPos = currentPos + 1;
+            
+            if (nextPos >= this.state.shuffledPlaylist.length) {
+                if (this.state.loopMode === 'all') {
+                    next = this.state.shuffledPlaylist[0];
+                } else {
+                    return;
+                }
             } else {
-                return;
+                next = this.state.shuffledPlaylist[nextPos];
             }
         } else {
-            next = this.state.shuffledPlaylist[nextPos];
+            next = this.state.currentTrackIndex + 1;
+            if (next >= this.state.playlist.length) {
+                if (this.state.loopMode === 'all') next = 0;
+                else return;
+            }
         }
-    } else {
-        next = this.state.currentTrackIndex + 1;
-        if (next >= this.state.playlist.length) {
-            if (this.state.loopMode === 'all') next = 0;
-            else return;
+        
+        // Bounds check
+        if (next >= 0 && next < this.state.playlist.length) {
+            this.loadTrack(next);
         }
     }
-    this.loadTrack(next);
-}
 
     playPrevious() {
-    if (this.state.playlist.length === 0) return;
-    
-    if (this.state.isShuffled && this.state.shuffledPlaylist.length > 0) {
-        // Find current position in shuffled playlist
-        const currentPos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
+        if (this.state.playlist.length === 0) return;
         
-        // If current track not found in shuffle, just go back normally
-        if (currentPos === -1) {
+        if (this.state.isShuffled && this.state.shuffledPlaylist.length > 0) {
+            const currentPos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
+            
+            if (currentPos === -1) {
+                if (this.state.currentTrackIndex > 0) {
+                    this.loadTrack(this.state.currentTrackIndex - 1);
+                } else if (this.state.loopMode === 'all') {
+                    this.loadTrack(this.state.playlist.length - 1);
+                }
+                return;
+            }
+            
+            const prevPos = currentPos - 1;
+            
+            if (prevPos < 0) {
+                if (this.state.loopMode === 'all') {
+                    const prev = this.state.shuffledPlaylist[this.state.shuffledPlaylist.length - 1];
+                    if (prev !== undefined && prev >= 0 && prev < this.state.playlist.length) {
+                        this.loadTrack(prev);
+                    }
+                }
+                return;
+            }
+            
+            const prev = this.state.shuffledPlaylist[prevPos];
+            if (prev !== undefined && prev >= 0 && prev < this.state.playlist.length) {
+                this.loadTrack(prev);
+            }
+        } else {
             if (this.state.currentTrackIndex > 0) {
                 this.loadTrack(this.state.currentTrackIndex - 1);
             } else if (this.state.loopMode === 'all') {
                 this.loadTrack(this.state.playlist.length - 1);
             }
-            return;
-        }
-        
-        const prevPos = currentPos - 1;
-        
-        if (prevPos < 0) {
-            if (this.state.loopMode === 'all') {
-                const prev = this.state.shuffledPlaylist[this.state.shuffledPlaylist.length - 1];
-                if (prev !== undefined && prev >= 0 && prev < this.state.playlist.length) {
-                    this.loadTrack(prev);
-                }
-            }
-            return;
-        }
-        
-        const prev = this.state.shuffledPlaylist[prevPos];
-        if (prev !== undefined && prev >= 0 && prev < this.state.playlist.length) {
-            this.loadTrack(prev);
-        }
-    } else {
-        // Normal (non-shuffled) mode
-        if (this.state.currentTrackIndex > 0) {
-            this.loadTrack(this.state.currentTrackIndex - 1);
-        } else if (this.state.loopMode === 'all') {
-            this.loadTrack(this.state.playlist.length - 1);
         }
     }
-}
 
     handleTrackEnded() {
         this._rafStop();
-        if (this.state.loopMode === 'one') {
+        if (this.state.loopMode === 'one' && this.elements.player) {
             this.elements.player.currentTime = 0;
             this.elements.player.play();
         } else {
@@ -1580,85 +1673,92 @@ case 'arrowleft':
     }
 
     toggleShuffle() {
-    this.state.isShuffled = !this.state.isShuffled;
-    this.elements.shuffleButton?.classList.toggle('active', this.state.isShuffled);
-    
-    if (this.state.isShuffled) {
-        // Create shuffled version of playlist
-        this.state.shuffledPlaylist = [...Array(this.state.playlist.length).keys()];
-        
-        // Fisher-Yates shuffle algorithm
-        for (let i = this.state.shuffledPlaylist.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [this.state.shuffledPlaylist[i], this.state.shuffledPlaylist[j]] = 
-            [this.state.shuffledPlaylist[j], this.state.shuffledPlaylist[i]];
+        this.state.isShuffled = !this.state.isShuffled;
+        if (this.elements.shuffleButton) {
+            this.elements.shuffleButton.classList.toggle('active', this.state.isShuffled);
         }
         
-        // Find current track in shuffled playlist
-        const currentInShuffled = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
-        if (currentInShuffled !== -1) {
-            // Move current track to front of shuffled playlist
-            this.state.shuffledPlaylist.splice(currentInShuffled, 1);
-            this.state.shuffledPlaylist.unshift(this.state.currentTrackIndex);
+        if (this.state.isShuffled) {
+            this.state.shuffledPlaylist = [...Array(this.state.playlist.length).keys()];
+            
+            // Fisher-Yates shuffle
+            for (let i = this.state.shuffledPlaylist.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [this.state.shuffledPlaylist[i], this.state.shuffledPlaylist[j]] = 
+                [this.state.shuffledPlaylist[j], this.state.shuffledPlaylist[i]];
+            }
+            
+            const currentInShuffled = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
+            if (currentInShuffled !== -1) {
+                this.state.shuffledPlaylist.splice(currentInShuffled, 1);
+                this.state.shuffledPlaylist.unshift(this.state.currentTrackIndex);
+            }
+        } else {
+            this.state.shuffledPlaylist = [];
         }
-    } else {
-        // Clear shuffled playlist
-        this.state.shuffledPlaylist = [];
+        
+        if (this.managers.audioBuffer) {
+            this.managers.audioBuffer.setShuffleState(this.state.isShuffled);
+        }
+        if (this.managers.ui) {
+            this.managers.ui.showToast(`Shuffle ${this.state.isShuffled ? 'on' : 'off'}`, 'info');
+        }
     }
-    
-    this.managers.audioBuffer?.setShuffleState(this.state.isShuffled);
-    this.managers.ui?.showToast(`Shuffle ${this.state.isShuffled ? 'on' : 'off'}`, 'info');
-}
 
     cycleLoopMode() {
-    const modes = ['off', 'all', 'one'];
-    this.state.loopMode = modes[(modes.indexOf(this.state.loopMode) + 1) % modes.length];
-    
-    // Update button state
-    if (this.elements.loopButton) {
-        this.elements.loopButton.classList.toggle('active', this.state.loopMode !== 'off');
+        const modes = ['off', 'all', 'one'];
+        this.state.loopMode = modes[(modes.indexOf(this.state.loopMode) + 1) % modes.length];
         
-        // Special styling for loop-one mode
-        if (this.state.loopMode === 'one') {
-            this.elements.loopButton.classList.add('loop-one');
-        } else {
-            this.elements.loopButton.classList.remove('loop-one');
+        if (this.elements.loopButton) {
+            this.elements.loopButton.classList.toggle('active', this.state.loopMode !== 'off');
+            
+            if (this.state.loopMode === 'one') {
+                this.elements.loopButton.classList.add('loop-one');
+            } else {
+                this.elements.loopButton.classList.remove('loop-one');
+            }
+            
+            const label = this.elements.loopButton.querySelector('.control-label');
+            if (label) {
+                const modeText = {
+                    'off': 'Loop Off',
+                    'all': 'Loop All',
+                    'one': 'Loop One'
+                };
+                label.textContent = modeText[this.state.loopMode];
+            }
         }
         
-        // Update label text
-        const label = this.elements.loopButton.querySelector('.control-label');
-        if (label) {
-            const modeText = {
-                'off': 'Loop Off',
-                'all': 'Loop All',
-                'one': 'Loop One'
-            };
-            label.textContent = modeText[this.state.loopMode];
+        if (this.managers.ui) {
+            this.managers.ui.showToast(`Loop: ${this.state.loopMode}`, 'info');
         }
     }
-    
-    this.managers.ui?.showToast(`Loop: ${this.state.loopMode}`, 'info');
-}
 
     clearPlaylist() {
         if (!confirm('Clear playlist?')) return;
 
         this._rafStop();
-        this.managers.fileLoading?.cleanupPlaylist(this.state.playlist);
-        this.managers.audioBuffer?.clearAllBuffers();
+        
+        if (this.managers.fileLoading) {
+            this.managers.fileLoading.cleanupPlaylist(this.state.playlist);
+        }
+        if (this.managers.audioBuffer) {
+            this.managers.audioBuffer.clearAllBuffers();
+        }
         this.revokeBlobURLs();
 
         this.state.playlist          = [];
         this.state.currentTrackIndex = -1;
         this.state.shuffledPlaylist = [];
 
-        this.elements.player.pause();
-        this.elements.player.src = '';
+        if (this.elements.player) {
+            this.elements.player.pause();
+            this.elements.player.src = '';
+        }
 
         this.clearMetadata();
         this.updatePlaylist();
 
-        // Reset progress display
         this._raf.lastPercent = -1;
         if (this.elements.progressBar)        this.elements.progressBar.style.width  = '0%';
         if (this.elements.currentTimeDisplay) this.elements.currentTimeDisplay.textContent = '0:00';
@@ -1671,7 +1771,7 @@ case 'arrowleft':
     // ── Audio event handlers ──────────────────────────────────────────────────
 
     handleMetadataLoaded() {
-        if (!this.elements.durationDisplay) return;
+        if (!this.elements.durationDisplay || !this.elements.player) return;
         const dur = this.elements.player.duration;
         this.elements.durationDisplay.textContent = isFinite(dur) ? this.formatTime(dur) : '0:00';
     }
@@ -1682,21 +1782,31 @@ case 'arrowleft':
                 this.managers.audioPipeline.resume();
             }
         }
-        window.backgroundAudioHandler?.updatePlaybackState('playing');
-        this.managers.performance?.setPlayState(true);
-        this._rafStart(); // ← begin progress + lyrics loop
+        if (window.backgroundAudioHandler) {
+            window.backgroundAudioHandler.updatePlaybackState('playing');
+        }
+        if (this.managers.performance) {
+            this.managers.performance.setPlayState(true);
+        }
+        this._rafStart();
     }
 
     handlePause() {
-        window.backgroundAudioHandler?.updatePlaybackState('paused');
-        this.managers.performance?.setPlayState(false);
-        this._rafStop(); // ← end progress + lyrics loop
+        if (window.backgroundAudioHandler) {
+            window.backgroundAudioHandler.updatePlaybackState('paused');
+        }
+        if (this.managers.performance) {
+            this.managers.performance.setPlayState(false);
+        }
+        this._rafStop();
     }
 
     handlePlayerError(e) {
         if (this.state.currentTrackIndex === -1) return;
         const info = this.state.playlist[this.state.currentTrackIndex];
-        this.managers.errorRecovery?.handleAudioError(this.elements.player, info);
+        if (this.managers.errorRecovery) {
+            this.managers.errorRecovery.handleAudioError(this.elements.player, info);
+        }
     }
 
     // ── Equalizer ─────────────────────────────────────────────────────────────
@@ -1708,7 +1818,9 @@ case 'arrowleft':
             mid:    this.managers.audioPipeline.midFilter,
             treble: this.managers.audioPipeline.trebleFilter,
         };
-        if (f[type]) this.managers.audioPipeline.setGain(f[type], value);
+        if (f[type] && this.managers.audioPipeline) {
+            this.managers.audioPipeline.setGain(f[type], value);
+        }
     }
 
     resetEqualizer() {
@@ -1749,14 +1861,13 @@ case 'arrowleft':
             if (this.state.destroyed || this.state.playlist.length === 0) break;
 
             await Promise.all(pending.slice(i, i + 3).map(async ({ track, index }) => {
-                // Skip if the playlist slot has been replaced
                 if (this.state.playlist[index] !== track) return;
                 try {
                     const blob     = await (await fetch(track.audioURL)).blob();
                     const file     = new File([blob], track.fileName, { type: 'audio/mpeg' });
                     const analysis = await this.managers.analyzer.analyzeTrack(file, track.fileName);
                     this.state.playlist[index].analysis = analysis;
-                } catch { /* best-effort, silent fail */ }
+                } catch { /* best-effort */ }
             }));
 
             this.updatePlaylist();
@@ -1778,17 +1889,19 @@ case 'arrowleft':
                     duration: t.duration,
                 }))
             ));
-        } catch { /* storage full, non-fatal */ }
+        } catch { /* storage full */ }
     }
 
     async restoreState() {
         try {
-            if (localStorage.getItem('crossfadeEnabled') === 'true')
-                this.managers.crossfade?.setEnabled(true);
-            if (localStorage.getItem('autoEQEnabled') === 'true')
-                this.managers.autoEQ?.setEnabled(true);
+            if (localStorage.getItem('crossfadeEnabled') === 'true' && this.managers.crossfade)
+                this.managers.crossfade.setEnabled(true);
+            if (localStorage.getItem('autoEQEnabled') === 'true' && this.managers.autoEQ)
+                this.managers.autoEQ.setEnabled(true);
 
-            this.managers.audioBuffer?.setShuffleState(this.state.isShuffled);
+            if (this.managers.audioBuffer) {
+                this.managers.audioBuffer.setShuffleState(this.state.isShuffled);
+            }
         } catch { /* silent fail */ }
     }
 
@@ -1882,16 +1995,34 @@ case 'arrowleft':
         });
         this.resources.eventListeners = [];
 
-        ['performance', 'audioBuffer', 'audioPipeline', 'lyrics', 'ui'].forEach(key => {
+        // Destroy ALL managers with proper null checking
+        const managersToDestroy = [
+            'performance', 'audioBuffer', 'audioPipeline', 'lyrics', 'ui',
+            'volume', 'crossfade', 'metadata', 'vtt', 'errorRecovery',
+            'analysisParser', 'metadataEditor', 'analyzer', 'customMetadata',
+            'folderPersistence', 'fileLoading', 'customBackground',
+            'playlistRenderer', 'audioPresets', 'autoEQ', 'worker',
+            'imageOptimizer'
+        ];
+
+        managersToDestroy.forEach(key => {
             const m = this.managers[key];
             if (m && typeof m.destroy === 'function') {
-                try { m.destroy(); } catch (_) {}
+                try { m.destroy(); } catch (e) {
+                    this.debugLog(`⚠️ Failed to destroy ${key}: ${e.message}`, 'warning');
+                }
             }
         });
 
-        this.colorCache?.clear();
+        this.colorCache.clear();
 
-        // Release the full object graph
+        // Clean up all window references
+        this.resources.windowRefs.forEach(key => {
+            try { delete window[key]; } catch (_) {}
+        });
+        this.resources.windowRefs.clear();
+
+        // Release object graph
         this.managers = {};
         this.elements = {};
 
@@ -1904,9 +2035,9 @@ case 'arrowleft':
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎵 Initializing — Clean v4.0');
+    console.log('🎵 Initializing — v5.0');
     window.musicPlayerApp = new MusicPlayerApp();
     window.musicPlayerApp.init();
 });
 
-console.log('✅ script.js loaded — Clean v4.0');
+console.log('✅ script.js loaded — v5.0');
