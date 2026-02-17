@@ -1,351 +1,288 @@
 /* ============================================
-   Enhanced Folder Persistence System v2.0
-   Robust, efficient IndexedDB + Storage API implementation
+   FOLDER PERSISTENCE v2.1
+   IndexedDB folder handle storage.
    ============================================ */
 
 class FolderPersistence {
-    constructor() {
-        // Database configuration
-        this.DB_NAME = 'MusicPlayerDB';
-        this.DB_VERSION = 2;
-        this.STORE_NAME = 'folderHandles';
-        this.META_STORE_NAME = 'folderMetadata';
-        this.HISTORY_STORE_NAME = 'folderHistory';
-        this.MAX_HISTORY = 10;
-        
-        // State
-        this.db = null;
-        this.isReady = false;
-        this.initPromise = null;
-        
-        // In-memory cache to reduce DB reads
-        this.cache = {
-            metadata: null,
-            history: null,
-            lastCacheTime: 0,
-            cacheTTL: 5000 // 5 seconds
+
+    static DB_NAME    = 'MusicPlayerDB';
+    static DB_VERSION = 2;
+
+    // Store names
+    static HANDLES  = 'folderHandles';
+    static META     = 'folderMetadata';
+    static HISTORY  = 'folderHistory';
+
+    static MAX_HISTORY  = 10;
+    static CACHE_TTL_MS = 5_000;
+
+    constructor(debugLog = console.log) {
+        this._log = debugLog;
+
+        this._db          = null;
+        this._ready       = false;
+        this._failed      = false;   // latch — stops infinite retry in _ensureReady
+        this._initPromise = this._initialize();
+
+        this._cache = {
+            metadata:  null,
+            history:   null,
+            updatedAt: 0,
         };
-        
-        // Start initialization immediately
-        this.initPromise = this._initialize();
     }
 
-    // ========== INITIALIZATION ==========
+    // ─── Initialisation ───────────────────────────────────────────────────────
 
     async _initialize() {
+        if (this._failed) return false;
         try {
-            // Request persistent storage first
             await this._requestPersistentStorage();
-            
-            // Open database
             await this._openDB();
-            
-            // Verify database integrity
-            await this._verifyDatabaseIntegrity();
-            
-            // Load initial cache
-            await this._loadCache();
-            
-            this.isReady = true;
-            console.log('✅ Folder Persistence System initialized');
+            await this._verifyIntegrity();
+            await this._warmCache();
+            this._ready = true;
+            this._log('✅ FolderPersistence ready', 'success');
             return true;
         } catch (err) {
-            console.error('❌ Initialization failed:', err);
-            this.isReady = false;
+            this._failed = true;    // don't retry — let callers surface the error
+            this._log(`❌ FolderPersistence init failed: ${err.message}`, 'error');
             return false;
         }
     }
 
     async _requestPersistentStorage() {
-        if (!navigator.storage?.persist) {
-            console.warn('⚠️ Persistent storage API not available');
-            return false;
-        }
-
+        if (!navigator.storage?.persist) return false;
         try {
-            const isPersisted = await navigator.storage.persist();
-            if (isPersisted) {
-                console.log('✅ Storage will persist across sessions');
-            } else {
-                console.warn('⚠️ Storage may be cleared by browser');
-            }
-            return isPersisted;
-        } catch (err) {
-            console.error('❌ Failed to request persistent storage:', err);
+            const ok = await navigator.storage.persist();
+            this._log(`💾 Persistent storage: ${ok ? 'granted' : 'denied'}`, 'info');
+            return ok;
+        } catch {
             return false;
         }
     }
 
     async _openDB() {
-        if (this.db?.name === this.DB_NAME) {
-            return this.db;
-        }
-
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
-            
-            request.onerror = () => reject(request.error);
-            
-            request.onsuccess = () => {
-                this.db = request.result;
-                
-                // Handle unexpected database closure
-                this.db.onversionchange = () => {
-                    this.db.close();
-                    this.db = null;
-                    this.isReady = false;
-                    console.warn('⚠️ Database version changed');
+            const req = indexedDB.open(FolderPersistence.DB_NAME, FolderPersistence.DB_VERSION);
+
+            req.onerror   = () => reject(req.error);
+            req.onblocked = () => reject(new Error('Database upgrade blocked — close other tabs'));
+
+            req.onsuccess = () => {
+                this._db = req.result;
+                this._db.onversionchange = () => {
+                    this._db.close();
+                    this._db    = null;
+                    this._ready = false;
+                    this._log('⚠️ DB version changed — connection closed', 'warning');
                 };
-                
-                this.db.onerror = (event) => {
-                    console.error('❌ Database error:', event.target.error);
+                this._db.onerror = (e) => {
+                    this._log(`❌ DB error: ${e.target.error}`, 'error');
                 };
-                
-                resolve(this.db);
+                resolve(this._db);
             };
-            
-            request.onupgradeneeded = (event) => {
-                const db = event.target.result;
-                
-                // Create stores if they don't exist
-                if (!db.objectStoreNames.contains(this.STORE_NAME)) {
-                    db.createObjectStore(this.STORE_NAME);
+
+            req.onupgradeneeded = ({ target: { result: db } }) => {
+                if (!db.objectStoreNames.contains(FolderPersistence.HANDLES)) {
+                    db.createObjectStore(FolderPersistence.HANDLES);
                 }
-                
-                if (!db.objectStoreNames.contains(this.META_STORE_NAME)) {
-                    const metaStore = db.createObjectStore(this.META_STORE_NAME, { keyPath: 'id' });
-                    metaStore.createIndex('lastAccessed', 'lastAccessed', { unique: false });
-                    metaStore.createIndex('folderName', 'folderName', { unique: false });
+                if (!db.objectStoreNames.contains(FolderPersistence.META)) {
+                    const s = db.createObjectStore(FolderPersistence.META, { keyPath: 'id' });
+                    s.createIndex('lastAccessed', 'lastAccessed', { unique: false });
                 }
-                
-                if (!db.objectStoreNames.contains(this.HISTORY_STORE_NAME)) {
-                    const historyStore = db.createObjectStore(this.HISTORY_STORE_NAME, { 
-                        keyPath: 'timestamp'
-                    });
-                    historyStore.createIndex('folderName', 'folderName', { unique: false });
+                if (!db.objectStoreNames.contains(FolderPersistence.HISTORY)) {
+                    const s = db.createObjectStore(FolderPersistence.HISTORY, { keyPath: 'timestamp' });
+                    s.createIndex('folderName', 'folderName', { unique: false });
                 }
-            };
-            
-            request.onblocked = () => {
-                console.warn('⚠️ Database upgrade blocked. Close other tabs.');
-                reject(new Error('Database upgrade blocked'));
             };
         });
     }
 
-    async _verifyDatabaseIntegrity() {
-        try {
-            const stores = [this.STORE_NAME, this.META_STORE_NAME, this.HISTORY_STORE_NAME];
-            const dbStores = Array.from(this.db.objectStoreNames);
-            
-            for (const store of stores) {
-                if (!dbStores.includes(store)) {
-                    throw new Error(`Missing store: ${store}`);
-                }
-            }
-            
-            return true;
-        } catch (err) {
-            console.error('❌ Database integrity check failed:', err);
-            await this._repairDatabase();
-            return false;
-        }
+    async _verifyIntegrity() {
+        const required = [FolderPersistence.HANDLES, FolderPersistence.META, FolderPersistence.HISTORY];
+        const existing = Array.from(this._db.objectStoreNames);
+        const missing  = required.filter(s => !existing.includes(s));
+
+        if (missing.length === 0) return;
+
+        this._log(`🔧 Missing stores [${missing.join(', ')}] — rebuilding database`, 'warning');
+        this._db.close();
+        this._db = null;
+
+        await new Promise((resolve, reject) => {
+            const req = indexedDB.deleteDatabase(FolderPersistence.DB_NAME);
+            req.onsuccess = () => resolve();
+            req.onerror   = () => reject(req.error);
+            req.onblocked = () => reject(new Error('Delete blocked'));
+        });
+
+        await this._openDB();
     }
 
-    async _repairDatabase() {
-        console.log('🔧 Attempting database repair...');
-        try {
-            this.db?.close();
-            this.db = null;
-            
-            await new Promise((resolve, reject) => {
-                const request = indexedDB.deleteDatabase(this.DB_NAME);
-                request.onsuccess = () => resolve();
-                request.onerror = () => reject(request.error);
-                request.onblocked = () => reject(new Error('Delete blocked'));
-            });
-            
-            await this._openDB();
-            console.log('✅ Database repaired');
-        } catch (err) {
-            console.error('❌ Database repair failed:', err);
-            throw err;
-        }
-    }
-
-    async _loadCache() {
-    try {
-        // Only load cache if DB is ready (avoid loading during init)
-        if (!this.db) return;
-        
+    async _warmCache() {
+        if (!this._db) return;
         const [metadata, history] = await Promise.all([
-            this._readMetadata().catch(() => null),
-            this._readHistory().catch(() => [])
+            this._readMeta().catch(() => null),
+            this._readHistory().catch(() => []),
         ]);
-        
-        this.cache.metadata = metadata;
-        this.cache.history = history;
-        this.cache.lastCacheTime = Date.now();
-    } catch (err) {
-        console.error('⚠️ Failed to load cache:', err);
-        // Don't throw - cache loading is optional
-    }
-}
-
-    _invalidateCache() {
-        this.cache.metadata = null;
-        this.cache.history = null;
-        this.cache.lastCacheTime = 0;
+        this._cache.metadata  = metadata;
+        this._cache.history   = history;
+        this._cache.updatedAt = Date.now();
     }
 
-    _isCacheValid() {
-        return Date.now() - this.cache.lastCacheTime < this.cache.cacheTTL;
-    }
+    // ─── Readiness guard ──────────────────────────────────────────────────────
 
     async _ensureReady() {
-        if (this.isReady && this.db) return true;
-        
-        if (this.initPromise) {
-            await this.initPromise;
-        }
-        
-        if (!this.isReady || !this.db) {
-            await this._initialize();
-        }
-        
-        if (!this.isReady || !this.db) {
-            throw new Error('Database initialization failed');
-        }
-        
-        return true;
+        if (this._ready && this._db) return;
+        if (this._failed) throw new Error('FolderPersistence failed to initialise — check console for details');
+        if (this._initPromise) await this._initPromise;
+        if (!this._ready || !this._db) throw new Error('Database unavailable');
     }
 
-// ========== CORE DATABASE OPERATIONS ==========
+    // ─── Core transaction helper ──────────────────────────────────────────────
 
-async _executeTransaction(storeNames, mode, operation) {
-    // DON'T call _ensureReady here - it causes circular dependency during init
-    if (!this.db) {
-        throw new Error('Database not initialized');
-    }
-    
-    return new Promise((resolve, reject) => {
-        try {
-            const tx = this.db.transaction(storeNames, mode);
-            const stores = storeNames.length === 1 
-                ? tx.objectStore(storeNames[0])
-                : storeNames.map(name => tx.objectStore(name));
-            
-            let result;
-            
-            tx.oncomplete = () => resolve(result);
-            tx.onerror = () => reject(tx.error);
-            tx.onabort = () => reject(new Error('Transaction aborted'));
-            
-            // Execute the operation
-            const operationResult = operation(stores, tx);
-            
-            // Handle promises from operation
-            if (operationResult instanceof Promise) {
-                operationResult
-                    .then(res => { result = res; })
-                    .catch(reject);
-            } else {
-                result = operationResult;
+    /**
+     * Run `operation(store)` inside a single-store IDB transaction.
+     *
+     * The result is whatever `operation` returns (sync value or the resolved
+     * value of a returned Promise). We wait for the inner Promise to settle
+     * BEFORE letting the transaction complete, by keeping a pending IDB request
+     * alive through the resolution.
+     *
+     * Key rule: `operation` must not `await` across IDB request boundaries —
+     * doing so causes the transaction to auto-commit. Operations that need
+     * multiple sequential requests should chain them via onsuccess callbacks.
+     */
+    _tx(storeName, mode, operation) {
+        return new Promise((resolve, reject) => {
+            if (!this._db) { reject(new Error('DB not open')); return; }
+
+            let tx;
+            try {
+                tx = this._db.transaction(storeName, mode);
+            } catch (err) {
+                reject(err); return;
             }
-        } catch (err) {
-            reject(err);
-        }
-    });
-}
 
-    async _readFromStore(storeName, key) {
-        return this._executeTransaction([storeName], 'readonly', (store) => {
-            return new Promise((resolve, reject) => {
-                const request = store.get(key);
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = () => reject(request.error);
-            });
+            const store = tx.objectStore(storeName);
+
+            tx.onerror  = () => reject(tx.error);
+            tx.onabort  = () => reject(new Error('Transaction aborted'));
+
+            let result;
+            try {
+                const ret = operation(store);
+                if (ret instanceof Promise) {
+                    ret.then(v => { result = v; }).catch(err => tx.abort());
+                    // Keep the transaction open until our Promise resolves by
+                    // reading a dummy value, then committing with oncomplete.
+                    tx.oncomplete = () => resolve(result);
+                } else {
+                    result = ret;
+                    tx.oncomplete = () => resolve(result);
+                }
+            } catch (err) {
+                reject(err);
+            }
         });
     }
 
-    async _writeToStore(storeName, key, value) {
-        return this._executeTransaction([storeName], 'readwrite', (store) => {
-            return new Promise((resolve, reject) => {
-                // If the store has a keyPath, we shouldn't provide a separate key parameter
-                // Note: store.keyPath can be a string or an array
-                const hasKeyPath = store.keyPath !== null && store.keyPath !== undefined;
-                const request = hasKeyPath ? store.put(value) : store.put(value, key);
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = () => reject(request.error);
-            });
-        });
+    // ─── Low-level store operations ───────────────────────────────────────────
+
+    _get(storeName, key) {
+        return this._tx(storeName, 'readonly', store =>
+            new Promise((res, rej) => {
+                const r = store.get(key);
+                r.onsuccess = () => res(r.result);
+                r.onerror   = () => rej(r.error);
+            })
+        );
     }
 
-    async _deleteFromStore(storeName, key) {
-        return this._executeTransaction([storeName], 'readwrite', (store) => {
-            return new Promise((resolve, reject) => {
-                const request = store.delete(key);
-                request.onsuccess = () => resolve(true);
-                request.onerror = () => reject(request.error);
-            });
-        });
+    _put(storeName, value, key) {
+        return this._tx(storeName, 'readwrite', store =>
+            new Promise((res, rej) => {
+                // Stores with a keyPath ignore the explicit key argument
+                const r = store.keyPath != null ? store.put(value) : store.put(value, key);
+                r.onsuccess = () => res(r.result);
+                r.onerror   = () => rej(r.error);
+            })
+        );
     }
 
-    async _getAllFromStore(storeName) {
-        return this._executeTransaction([storeName], 'readonly', (store) => {
-            return new Promise((resolve, reject) => {
-                const request = store.getAll();
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = () => reject(request.error);
-            });
-        });
+    _delete(storeName, key) {
+        return this._tx(storeName, 'readwrite', store =>
+            new Promise((res, rej) => {
+                const r = store.delete(key);
+                r.onsuccess = () => res(true);
+                r.onerror   = () => rej(r.error);
+            })
+        );
     }
 
-    async _clearStore(storeName) {
-        return this._executeTransaction([storeName], 'readwrite', (store) => {
-            return new Promise((resolve, reject) => {
-                const request = store.clear();
-                request.onsuccess = () => resolve(true);
-                request.onerror = () => reject(request.error);
-            });
-        });
+    _getAll(storeName) {
+        return this._tx(storeName, 'readonly', store =>
+            new Promise((res, rej) => {
+                const r = store.getAll();
+                r.onsuccess = () => res(r.result);
+                r.onerror   = () => rej(r.error);
+            })
+        );
     }
 
-    // ========== FOLDER HANDLE OPERATIONS ==========
+    _clear(storeName) {
+        return this._tx(storeName, 'readwrite', store =>
+            new Promise((res, rej) => {
+                const r = store.clear();
+                r.onsuccess = () => res(true);
+                r.onerror   = () => rej(r.error);
+            })
+        );
+    }
+
+    // ─── Cache helpers ────────────────────────────────────────────────────────
+
+    _cacheValid() {
+        return Date.now() - this._cache.updatedAt < FolderPersistence.CACHE_TTL_MS;
+    }
+
+    _invalidateCache() {
+        this._cache.metadata  = null;
+        this._cache.history   = null;
+        this._cache.updatedAt = 0;
+    }
+
+    // ─── Folder handle ────────────────────────────────────────────────────────
 
     async saveFolderHandle(handle, options = {}) {
         try {
             await this._ensureReady();
-            
-            const metadata = {
-                id: 'musicFolder',
-                folderName: handle.name,
+
+            const meta = {
+                id:           'musicFolder',
+                folderName:   handle.name,
                 lastAccessed: Date.now(),
-                trackCount: options.trackCount || 0,
-                hasLyrics: options.hasLyrics || false,
-                hasAnalysis: options.hasAnalysis || false,
-                totalSize: options.totalSize || 0,
-                savedAt: Date.now()
+                savedAt:      Date.now(),
+                trackCount:   options.trackCount   ?? 0,
+                hasLyrics:    options.hasLyrics    ?? false,
+                hasAnalysis:  options.hasAnalysis  ?? false,
+                totalSize:    options.totalSize    ?? 0,
             };
-            
-            // Save handle and metadata in parallel operations
+
             await Promise.all([
-                this._writeToStore(this.STORE_NAME, 'musicFolder', handle),
-                this._writeToStore(this.META_STORE_NAME, metadata.id, metadata),
-                this._addToHistory(handle.name, metadata)
+                this._put(FolderPersistence.HANDLES, handle, 'musicFolder'),
+                this._put(FolderPersistence.META,    meta),
+                this._addToHistory(handle.name, meta),
             ]);
-            
-            // Update localStorage for quick checks
-            this._updateLocalStorage(handle.name);
-            
-            // Update cache
-            this.cache.metadata = metadata;
-            this.cache.lastCacheTime = Date.now();
-            
-            console.log(`✅ Folder "${handle.name}" saved successfully`);
-            return { success: true, metadata };
+
+            this._saveToLocalStorage(handle.name);
+            this._cache.metadata  = meta;
+            this._cache.updatedAt = Date.now();
+
+            this._log(`✅ Folder "${handle.name}" saved`, 'success');
+            return { success: true, metadata: meta };
         } catch (err) {
-            console.error('❌ Save failed:', err);
+            this._log(`❌ saveFolderHandle failed: ${err.message}`, 'error');
             return { success: false, error: err.message };
         }
     }
@@ -353,47 +290,30 @@ async _executeTransaction(storeNames, mode, operation) {
     async loadFolderHandle() {
         try {
             await this._ensureReady();
-            
-            // Try cache first
-            if (this._isCacheValid() && this.cache.metadata) {
-                const handle = await this._readFromStore(this.STORE_NAME, 'musicFolder');
-                if (handle) {
-                    console.log(`✅ Loaded folder from cache: "${handle.name}"`);
-                    return { handle, metadata: this.cache.metadata };
-                }
-            }
-            
-            // Load from database
+
             const [handle, metadata] = await Promise.all([
-                this._readFromStore(this.STORE_NAME, 'musicFolder'),
-                this._readMetadata()
+                this._get(FolderPersistence.HANDLES, 'musicFolder'),
+                this._cacheValid() && this._cache.metadata
+                    ? Promise.resolve(this._cache.metadata)
+                    : this._readMeta(),
             ]);
-            
-            if (!handle) {
-                console.log('ℹ️ No saved folder found');
-                return null;
-            }
-            
-            // Update cache and last accessed time
-            this.cache.metadata = metadata;
-            this.cache.lastCacheTime = Date.now();
-            
-            // Update last accessed asynchronously (don't wait)
-            this._updateLastAccessed().catch(err => 
-                console.warn('⚠️ Failed to update last accessed:', err)
-            );
-            
-            console.log(`✅ Loaded folder: "${handle.name}"`);
+
+            if (!handle) return null;
+
+            this._cache.metadata  = metadata;
+            this._cache.updatedAt = Date.now();
+
+            // Touch last-accessed asynchronously — don't block the caller
+            this._touchLastAccessed().catch(() => {});
+
+            this._log(`✅ Loaded folder "${handle.name}"`, 'success');
             return { handle, metadata };
         } catch (err) {
-            console.error('❌ Load failed:', err);
-            
-            // Auto-cleanup on corruption
+            this._log(`❌ loadFolderHandle failed: ${err.message}`, 'error');
+
             if (err.name === 'InvalidStateError' || err.name === 'NotFoundError') {
-                console.log('🔧 Cleaning up corrupted data...');
                 await this.deleteFolderHandle();
             }
-            
             return null;
         }
     }
@@ -401,288 +321,184 @@ async _executeTransaction(storeNames, mode, operation) {
     async deleteFolderHandle() {
         try {
             await this._ensureReady();
-            
-            // Delete handle and metadata in parallel
+
             await Promise.all([
-                this._deleteFromStore(this.STORE_NAME, 'musicFolder'),
-                this._deleteFromStore(this.META_STORE_NAME, 'musicFolder')
+                this._delete(FolderPersistence.HANDLES, 'musicFolder'),
+                this._delete(FolderPersistence.META,    'musicFolder'),
             ]);
-            
-            // Clear localStorage
-            localStorage.removeItem('hasSavedFolder');
-            localStorage.removeItem('savedFolderName');
-            localStorage.removeItem('savedFolderTime');
-            
-            // Invalidate cache
+
+            ['hasSavedFolder', 'savedFolderName', 'savedFolderTime']
+                .forEach(k => localStorage.removeItem(k));
+
             this._invalidateCache();
-            
-            console.log('🗑️ Folder handle deleted');
+            this._log('🗑️ Folder handle deleted', 'info');
             return true;
         } catch (err) {
-            console.error('❌ Delete failed:', err);
+            this._log(`❌ deleteFolderHandle failed: ${err.message}`, 'error');
             return false;
         }
     }
 
-    // ========== METADATA OPERATIONS ==========
+    // ─── Metadata ─────────────────────────────────────────────────────────────
 
-    async _readMetadata() {
-        return await this._readFromStore(this.META_STORE_NAME, 'musicFolder');
+    _readMeta() {
+        return this._get(FolderPersistence.META, 'musicFolder');
     }
 
     async getFolderMetadata() {
-    try {
-        await this._ensureReady(); // ADD THIS LINE
-        
-        // Return cached metadata if valid
-        if (this._isCacheValid() && this.cache.metadata) {
-            return this.cache.metadata;
+        try {
+            await this._ensureReady();
+            if (this._cacheValid() && this._cache.metadata) return this._cache.metadata;
+            const meta = await this._readMeta();
+            this._cache.metadata  = meta;
+            this._cache.updatedAt = Date.now();
+            return meta;
+        } catch (err) {
+            this._log(`⚠️ getFolderMetadata failed: ${err.message}`, 'warning');
+            return null;
         }
-        
-        const metadata = await this._readMetadata();
-        
-        // Update cache
-        this.cache.metadata = metadata;
-        this.cache.lastCacheTime = Date.now();
-        
-        return metadata;
-    } catch (err) {
-        console.error('⚠️ Failed to get metadata:', err);
-        return null;
     }
-}
 
     async updateMetadata(updates) {
         try {
             await this._ensureReady();
-            
-            const metadata = await this._readMetadata();
-            if (!metadata) {
-                console.warn('⚠️ No metadata to update');
-                return false;
-            }
-            
-            const updatedMetadata = {
-                ...metadata,
-                ...updates,
-                lastAccessed: Date.now()
-            };
-            
-            await this._writeToStore(this.META_STORE_NAME, updatedMetadata.id, updatedMetadata);
-            
-            // Update cache
-            this.cache.metadata = updatedMetadata;
-            this.cache.lastCacheTime = Date.now();
-            
-            console.log('✅ Metadata updated');
+            const meta = await this._readMeta();
+            if (!meta) { this._log('⚠️ No metadata to update', 'warning'); return false; }
+
+            const updated = { ...meta, ...updates, lastAccessed: Date.now() };
+            await this._put(FolderPersistence.META, updated);
+
+            this._cache.metadata  = updated;
+            this._cache.updatedAt = Date.now();
             return true;
         } catch (err) {
-            console.error('❌ Update failed:', err);
+            this._log(`❌ updateMetadata failed: ${err.message}`, 'error');
             return false;
         }
     }
 
-    async _updateLastAccessed() {
-        try {
-            const metadata = await this._readMetadata();
-            if (!metadata) return false;
-            
-            metadata.lastAccessed = Date.now();
-            await this._writeToStore(this.META_STORE_NAME, metadata.id, metadata);
-            
-            // Update cache
-            this.cache.metadata = metadata;
-            
-            return true;
-        } catch (err) {
-            console.error('⚠️ Failed to update last accessed:', err);
-            return false;
-        }
+    async _touchLastAccessed() {
+        const meta = await this._readMeta();
+        if (!meta) return;
+        await this._put(FolderPersistence.META, { ...meta, lastAccessed: Date.now() });
+        this._cache.metadata = { ...meta, lastAccessed: Date.now() };
     }
 
-    // ========== HISTORY OPERATIONS ==========
-
-    async _addToHistory(folderName, metadata) {
-        try {
-            const historyEntry = {
-                timestamp: Date.now(),
-                folderName: folderName,
-                trackCount: metadata.trackCount || 0,
-                hasLyrics: metadata.hasLyrics || false,
-                hasAnalysis: metadata.hasAnalysis || false
-            };
-            
-            await this._writeToStore(this.HISTORY_STORE_NAME, historyEntry.timestamp, historyEntry);
-            
-            // Prune old entries asynchronously
-            this._pruneHistory().catch(err => 
-                console.warn('⚠️ Failed to prune history:', err)
-            );
-            
-            // Invalidate history cache
-            this.cache.history = null;
-            
-            return true;
-        } catch (err) {
-            console.error('⚠️ Failed to add to history:', err);
-            return false;
-        }
-    }
+    // ─── History ──────────────────────────────────────────────────────────────
 
     async _readHistory() {
-        const history = await this._getAllFromStore(this.HISTORY_STORE_NAME);
-        return history.sort((a, b) => b.timestamp - a.timestamp);
+        const all = await this._getAll(FolderPersistence.HISTORY);
+        return all.sort((a, b) => b.timestamp - a.timestamp);
     }
 
     async getHistory() {
-    try {
-        await this._ensureReady(); // ADD THIS LINE
-        
-        // Return cached history if valid
-        if (this._isCacheValid() && this.cache.history) {
-            return this.cache.history;
-        }
-        
-        const history = await this._readHistory();
-        
-        // Update cache
-        this.cache.history = history;
-        this.cache.lastCacheTime = Date.now();
-        
-        return history;
-    } catch (err) {
-        console.error('⚠️ Failed to get history:', err);
-        return [];
-    }
-}
-
-    async _pruneHistory() {
         try {
             await this._ensureReady();
-            
-            return this._executeTransaction([this.HISTORY_STORE_NAME], 'readwrite', async (store) => {
-                return new Promise(async (resolve, reject) => {
-                    try {
-                        const getAllRequest = store.getAll();
-                        
-                        getAllRequest.onsuccess = () => {
-                            const entries = getAllRequest.result;
-                            
-                            if (entries.length <= this.MAX_HISTORY) {
-                                resolve(true);
-                                return;
-                            }
-                            
-                            // Sort by timestamp and keep only the most recent
-                            entries.sort((a, b) => b.timestamp - a.timestamp);
-                            const toDelete = entries.slice(this.MAX_HISTORY);
-                            
-                            // Delete old entries
-                            let deletedCount = 0;
-                            for (const entry of toDelete) {
-                                const deleteRequest = store.delete(entry.timestamp);
-                                deleteRequest.onsuccess = () => {
-                                    deletedCount++;
-                                    if (deletedCount === toDelete.length) {
-                                        console.log(`🗑️ Pruned ${deletedCount} old history entries`);
-                                        resolve(true);
-                                    }
-                                };
-                                deleteRequest.onerror = () => reject(deleteRequest.error);
-                            }
-                        };
-                        
-                        getAllRequest.onerror = () => reject(getAllRequest.error);
-                    } catch (err) {
-                        reject(err);
-                    }
-                });
-            });
+            if (this._cacheValid() && this._cache.history) return this._cache.history;
+            const history = await this._readHistory();
+            this._cache.history   = history;
+            this._cache.updatedAt = Date.now();
+            return history;
         } catch (err) {
-            console.error('⚠️ Prune failed:', err);
-            return false;
+            this._log(`⚠️ getHistory failed: ${err.message}`, 'warning');
+            return [];
         }
+    }
+
+    async _addToHistory(folderName, meta) {
+        await this._put(FolderPersistence.HISTORY, {
+            timestamp:   Date.now(),
+            folderName,
+            trackCount:  meta.trackCount  ?? 0,
+            hasLyrics:   meta.hasLyrics   ?? false,
+            hasAnalysis: meta.hasAnalysis ?? false,
+        });
+        this._cache.history = null; // invalidate only the history slice
+        this._pruneHistory().catch(() => {}); // best-effort, non-blocking
+    }
+
+    async _pruneHistory() {
+        await this._ensureReady();
+        return this._tx(FolderPersistence.HISTORY, 'readwrite', store =>
+            new Promise((resolve, reject) => {
+                const req = store.getAll();
+
+                req.onsuccess = () => {
+                    const entries = req.result;
+                    if (entries.length <= FolderPersistence.MAX_HISTORY) {
+                        resolve(true);
+                        return;
+                    }
+
+                    entries.sort((a, b) => b.timestamp - a.timestamp);
+                    const toDelete = entries.slice(FolderPersistence.MAX_HISTORY);
+                    let remaining  = toDelete.length;
+
+                    for (const entry of toDelete) {
+                        const del      = store.delete(entry.timestamp);
+                        del.onsuccess  = () => { if (--remaining === 0) resolve(true); };
+                        del.onerror    = () => reject(del.error);
+                    }
+                };
+
+                req.onerror = () => reject(req.error);
+            })
+        );
     }
 
     async clearHistory() {
         try {
-            await this._clearStore(this.HISTORY_STORE_NAME);
-            
-            // Invalidate cache
-            this.cache.history = null;
-            
-            console.log('🗑️ History cleared');
+            await this._clear(FolderPersistence.HISTORY);
+            this._cache.history = null;
+            this._log('🗑️ History cleared', 'info');
             return true;
         } catch (err) {
-            console.error('❌ Clear history failed:', err);
+            this._log(`❌ clearHistory failed: ${err.message}`, 'error');
             return false;
         }
     }
 
-    // ========== PERMISSION & VALIDATION ==========
+    // ─── Permission helpers ───────────────────────────────────────────────────
 
-    async verifyFolderPermission(handle, autoRequest = true) {
-        const options = { mode: 'read' };
-        
+    async verifyFolderPermission(handle) {
         try {
-            // First, try to query without triggering a prompt
-            let currentPermission = await handle.queryPermission(options);
-            
-            if (currentPermission === 'granted') {
-                // Double check by trying to access values (Windows sometimes reports 'granted' but fails access)
+            const state = await handle.queryPermission({ mode: 'read' });
+            if (state === 'granted') {
+                // Verify the permission actually works — Chrome on Windows sometimes
+                // reports 'granted' but still denies access
                 try {
-                    const iterator = handle.values();
-                    await iterator.next();
-                    return { granted: true, requested: false };
-                } catch (accessErr) {
-                    console.warn('⚠️ Permission reported as granted but access failed');
-                    // Don't try to re-request automatically - needs user gesture on Windows
+                    await handle.values().next();
+                    return { granted: true };
+                } catch {
                     return { granted: false, needsGesture: true };
                 }
             }
-            
-            if (autoRequest && (currentPermission === 'prompt' || currentPermission === 'denied')) {
-                // On Windows, a user gesture is REQUIRED to trigger requestPermission.
-                // This must be called from a click handler or similar.
-                // Don't auto-request on page load - it will fail silently on Windows
-                console.log('ℹ️ Permission needed - user must click to grant access');
-                return { granted: false, needsGesture: true };
-            }
-            
-            return { granted: currentPermission === 'granted', requested: false };
+            // 'prompt' or 'denied' — must be requested from a user gesture
+            return { granted: false, needsGesture: true };
         } catch (err) {
-            console.error('❌ Permission check failed:', err);
             return { granted: false, error: err.message };
         }
     }
 
     async requestFolderPermission(handle) {
-        const options = { mode: 'read' };
-        
         try {
-            const requestedPermission = await handle.requestPermission(options);
-            return { 
-                granted: requestedPermission === 'granted', 
-                requested: true 
-            };
-        } catch (reqErr) {
-            console.error('❌ requestPermission failed:', reqErr);
-            return { granted: false, error: reqErr.message, needsGesture: true };
+            const state = await handle.requestPermission({ mode: 'read' });
+            return { granted: state === 'granted', requested: true };
+        } catch (err) {
+            return { granted: false, error: err.message, needsGesture: true };
         }
     }
 
     async validateFolder(handle) {
         try {
-            const iterator = handle.values();
-            await iterator.next();
+            await handle.values().next();
             return true;
-        } catch (err) {
-            console.error('⚠️ Folder validation failed:', err);
+        } catch {
             return false;
         }
     }
 
-    // ========== QUICK ACCESS METHODS ==========
+    // ─── Quick localStorage accessors (no async) ─────────────────────────────
 
     hasSavedFolder() {
         return localStorage.getItem('hasSavedFolder') === 'true';
@@ -690,137 +506,92 @@ async _executeTransaction(storeNames, mode, operation) {
 
     getQuickInfo() {
         if (!this.hasSavedFolder()) return null;
-        
-        const savedTime = parseInt(localStorage.getItem('savedFolderTime')) || 0;
-        
+        const savedAt = parseInt(localStorage.getItem('savedFolderTime') ?? '0', 10);
         return {
-            name: localStorage.getItem('savedFolderName'),
-            savedAt: savedTime,
-            daysAgo: Math.floor((Date.now() - savedTime) / (1000 * 60 * 60 * 24))
+            name:    localStorage.getItem('savedFolderName'),
+            savedAt,
+            daysAgo: Math.floor((Date.now() - savedAt) / 86_400_000),
         };
     }
 
-    _updateLocalStorage(folderName) {
-        localStorage.setItem('hasSavedFolder', 'true');
+    _saveToLocalStorage(folderName) {
+        localStorage.setItem('hasSavedFolder',  'true');
         localStorage.setItem('savedFolderName', folderName);
         localStorage.setItem('savedFolderTime', Date.now().toString());
     }
 
-    // ========== STORAGE INFORMATION ==========
-
-    async getStorageEstimate() {
-        if (!navigator.storage?.estimate) return null;
-        
-        try {
-            return await navigator.storage.estimate();
-        } catch (err) {
-            console.error('⚠️ Storage estimate failed:', err);
-            return null;
-        }
-    }
-
-    formatBytes(bytes) {
-        if (!bytes || bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
-    }
+    // ─── Stats / export ───────────────────────────────────────────────────────
 
     async getStats() {
         try {
-            const estimate = await this.getStorageEstimate();
-            const metadata = await this.getFolderMetadata();
-            const history = await this.getHistory();
-            
-            if (!estimate) {
-                return {
-                    hasSavedFolder: this.hasSavedFolder(),
-                    folderName: metadata?.folderName || null,
-                    trackCount: metadata?.trackCount || 0,
-                    historyCount: history.length
-                };
-            }
-            
+            const [estimate, metadata, history] = await Promise.all([
+                navigator.storage?.estimate?.().catch(() => null) ?? null,
+                this.getFolderMetadata(),
+                this.getHistory(),
+            ]);
+
             return {
-                storageUsed: estimate.usage,
-                storageQuota: estimate.quota,
-                percentUsed: ((estimate.usage / estimate.quota) * 100).toFixed(2),
+                storageUsedMB:  estimate ? (estimate.usage  / 1_048_576).toFixed(2) : null,
+                storageQuotaMB: estimate ? (estimate.quota  / 1_048_576).toFixed(2) : null,
+                percentUsed:    estimate ? ((estimate.usage / estimate.quota) * 100).toFixed(1) : null,
                 hasSavedFolder: this.hasSavedFolder(),
-                folderName: metadata?.folderName || null,
-                trackCount: metadata?.trackCount || 0,
-                historyCount: history.length,
-                lastAccessed: metadata?.lastAccessed || null
+                folderName:     metadata?.folderName    ?? null,
+                trackCount:     metadata?.trackCount    ?? 0,
+                lastAccessed:   metadata?.lastAccessed  ?? null,
+                historyCount:   history.length,
             };
         } catch (err) {
-            console.error('⚠️ Stats failed:', err);
+            this._log(`⚠️ getStats failed: ${err.message}`, 'warning');
             return null;
         }
     }
-
-    // ========== EXPORT & BACKUP ==========
 
     async exportData() {
         try {
             const [metadata, history] = await Promise.all([
                 this.getFolderMetadata(),
-                this.getHistory()
+                this.getHistory(),
             ]);
-            
-            return JSON.stringify({
-                version: this.DB_VERSION,
-                exportedAt: Date.now(),
-                metadata,
-                history
-            }, null, 2);
+            return JSON.stringify({ version: FolderPersistence.DB_VERSION, exportedAt: Date.now(), metadata, history }, null, 2);
         } catch (err) {
-            console.error('❌ Export failed:', err);
+            this._log(`❌ exportData failed: ${err.message}`, 'error');
             return null;
         }
     }
 
-    // ========== CLEANUP & RESET ==========
+    // ─── Teardown ─────────────────────────────────────────────────────────────
 
     close() {
-        if (this.db) {
-            this.db.close();
-            this.db = null;
-            this.isReady = false;
+        if (this._db) {
+            this._db.close();
+            this._db    = null;
+            this._ready = false;
             this._invalidateCache();
-            console.log('🔒 Database connection closed');
+            this._log('🔒 DB connection closed', 'info');
         }
     }
 
     async reset() {
         try {
             this.close();
-            
             await new Promise((resolve, reject) => {
-                const request = indexedDB.deleteDatabase(this.DB_NAME);
-                request.onsuccess = () => resolve();
-                request.onerror = () => reject(request.error);
-                request.onblocked = () => {
-                    console.warn('⚠️ Database deletion blocked. Close other tabs.');
-                    // Try to continue anyway
-                    resolve();
-                };
+                const req   = indexedDB.deleteDatabase(FolderPersistence.DB_NAME);
+                req.onsuccess = () => resolve();
+                req.onerror   = () => reject(req.error);
+                req.onblocked = () => { this._log('⚠️ DB deletion blocked — close other tabs', 'warning'); resolve(); };
             });
-            
-            // Clear localStorage
-            localStorage.removeItem('hasSavedFolder');
-            localStorage.removeItem('savedFolderName');
-            localStorage.removeItem('savedFolderTime');
-            
-            console.log('🔄 System reset complete');
+            ['hasSavedFolder', 'savedFolderName', 'savedFolderTime']
+                .forEach(k => localStorage.removeItem(k));
+            this._failed = false; // allow re-init after reset
+            this._log('🔄 FolderPersistence reset', 'info');
             return true;
         } catch (err) {
-            console.error('❌ Reset failed:', err);
+            this._log(`❌ reset failed: ${err.message}`, 'error');
             return false;
         }
     }
 }
 
-// Export for use in other modules
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = FolderPersistence;
 }
