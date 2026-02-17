@@ -6,13 +6,15 @@
 class AudioBufferManager {
 
     // ─── Tier config ──────────────────────────────────────────────────────────
-    // Memory limits are sized for real-world audio ArrayBuffers.
-    // A typical 4-minute MP3 @ 320 kbps ≈ 9–10 MB once read into an ArrayBuffer,
-    // so even the "low" tier comfortably holds several tracks.
+    // Intentionally small: only the current track + one preload are kept in memory.
+    // A typical 4-minute MP3 @ 320 kbps ≈ 9–10 MB as an ArrayBuffer, so 25 MB
+    // comfortably covers 2 tracks with room to spare during the brief overlap
+    // while a new track is loading and the old one hasn't been evicted yet.
+    // preloadCount: 1 means "buffer the next track only" — matching the 2-track cap.
     static TIER_CONFIGS = {
-        high:   { maxMemoryMB: 400, maxTracks: 30, preloadCount: 3 },
-        medium: { maxMemoryMB: 150, maxTracks: 15, preloadCount: 2 },
-        low:    { maxMemoryMB:  50, maxTracks:  6, preloadCount: 1 },
+        high:   { maxMemoryMB: 25, maxTracks: 2, preloadCount: 1 },
+        medium: { maxMemoryMB: 25, maxTracks: 2, preloadCount: 1 },
+        low:    { maxMemoryMB: 25, maxTracks: 2, preloadCount: 1 },
     };
 
     // How often (ms) to run the background memory check.
@@ -60,8 +62,7 @@ class AudioBufferManager {
         };
 
         this._startMemoryMonitor();
-        this._log(`✅ AudioBufferManager v3.1 (${this._config.tier} tier, `
-            + `${this._config.maxMemoryMB} MB / ${this._config.maxTracks} tracks)`, 'success');
+        this._log(`✅ AudioBufferManager v3.1 — 2-track buffer (${this._config.maxMemoryMB} MB limit)`, 'success');
     }
 
     // ─── Configuration ────────────────────────────────────────────────────────
