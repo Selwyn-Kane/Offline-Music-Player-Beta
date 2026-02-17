@@ -1,120 +1,141 @@
 /* ============================================
-   Enhanced Volume Control v2.0 - WITH AUTO-INTEGRATION
-   Automatically integrates into audio chain when available
+   VOLUME CONTROL v3.0
+   Auto-integrating, resource-safe, optimized
    ============================================ */
 
 class VolumeControl {
+
     constructor(player, debugLog) {
+        this._log = debugLog || (() => {});
         this.player = player;
-        this.debugLog = debugLog;
         
         // Core state
         this.baseVolume = 1;
         this.lastVolume = 1;
-        this.isMutedState = false;
-        this.volumeSaveTimeout = null;
+        this.isMuted = false;
         
-        // Advanced features
+        // Features
         this.boostEnabled = false;
         this.boostAmount = 1.5;
         this.normalizationEnabled = true;
         this.targetLoudness = 0.7;
-        this.trackVolumes = new Map();
-        this.volumeHistory = [];
-        this.historyIndex = -1;
-        this.maxHistorySize = 20;
-        
-        // Fade settings
         this.fadeEnabled = true;
         this.fadeInDuration = 0.5;
         this.fadeOutDuration = 0.3;
-        this.isFading = false;
-        this.fadeInterval = null;
-        this.volumeBeforeFade = null;
         
         // Audio nodes
         this.gainNode = null;
         this.compressor = null;
         this.makeupGain = null;
         this.audioContext = null;
-        this.isAudioContextInitialized = false;
+        this.isAudioContextReady = false;
         
-        // Integration tracking
-        this.integrationAttempts = 0;
-        this.maxIntegrationAttempts = 5;
-        this.integrationInterval = null;
+        // State
+        this.isFading = false;
+        this.volumeBeforeFade = null;
+        this.trackVolumes = new Map();
+        this.volumeHistory = [];
+        this.historyIndex = -1;
+        this.maxHistorySize = 20;
         
-        // DOM elements
-        this.volumeSlider = document.getElementById('volume-slider');
-        this.volumeIcon = document.getElementById('volume-icon');
-        this.volumePercentage = document.getElementById('volume-percentage');
+        // Resource tracking
+        this._resources = {
+            intervals: new Set(),
+            timeouts: new Set(),
+            listeners: [],
+            menuCleanup: null,
+        };
         
-        if (!this.volumeSlider || !this.volumeIcon || !this.volumePercentage) {
-            console.error('Volume control elements not found in DOM');
+        // Debounce timers
+        this._saveTimer = null;
+        this._wheelTimer = null;
+        
+        // Integration
+        this._integrationRetries = 0;
+        this._maxRetries = 5;
+        this._retryInterval = null;
+        
+        // DOM refs
+        this._dom = {
+            slider: document.getElementById('volume-slider'),
+            icon: document.getElementById('volume-icon'),
+            percent: document.getElementById('volume-percentage'),
+        };
+        
+        if (!this._dom.slider || !this._dom.icon || !this._dom.percent) {
+            console.error('❌ Volume control elements missing');
             return;
         }
         
-        this.init();
+        this._init();
     }
-    
-    init() {
-        this.loadSettings();
+
+    // ─── Initialization ───────────────────────────────────────────────────────
+
+    _init() {
+        this._loadSettings();
         this.applyVolume(this.baseVolume);
-        this.volumeSlider.value = this.baseVolume;
-        this.updateUI();
-        this.setupEventListeners();
-        this.loadTrackVolumes();
-        this.setupAudioContextInitialization();
+        this._dom.slider.value = this.baseVolume;
+        this._updateUI();
+        this._bindEvents();
+        this._loadTrackMemory();
+        this._setupAudioInit();
         
-        this.debugLog('✅ Volume control initialized', 'success');
+        this._log('✅ Volume control initialized', 'success');
     }
-    
-    setupAudioContextInitialization() {
-        const initAudio = () => {
-            if (!this.isAudioContextInitialized) {
-                const success = this.initAudioNodes();
-                if (success) {
-                    // Try to integrate into existing chain
-                    this.attemptChainIntegration();
-                }
+
+    _setupAudioInit() {
+        const initHandler = () => {
+            if (!this.isAudioContextReady) {
+                const success = this._initAudioNodes();
+                if (success) this._tryIntegration();
             }
         };
         
         // Try on user interaction
-        const events = ['click', 'keydown', 'touchstart'];
-        events.forEach(event => {
-            document.addEventListener(event, initAudio, { once: true });
+        ['click', 'keydown', 'touchstart'].forEach(event => {
+            const listener = () => {
+                initHandler();
+                document.removeEventListener(event, listener);
+            };
+            document.addEventListener(event, listener);
+            this._resources.listeners.push({ element: document, event, handler: listener });
         });
         
-        // Try when player starts
-        this.player.addEventListener('play', initAudio, { once: true });
+        // Try on player play
+        const playListener = () => {
+            initHandler();
+            this.player.removeEventListener('play', playListener);
+        };
+        this.player.addEventListener('play', playListener);
+        this._resources.listeners.push({ element: this.player, event: 'play', handler: playListener });
         
-        // Also try on audioContextReady event
-        document.addEventListener('audioContextReady', initAudio, { once: true });
+        // Try on audioContextReady event
+        const ctxListener = () => {
+            initHandler();
+            document.removeEventListener('audioContextReady', ctxListener);
+        };
+        document.addEventListener('audioContextReady', ctxListener);
+        this._resources.listeners.push({ element: document, event: 'audioContextReady', handler: ctxListener });
     }
-    
-    /**
-     * ✅ ENHANCED: Create audio nodes and attempt integration
-     */
-    initAudioNodes() {
-        if (this.isAudioContextInitialized) {
-            return true;
-        }
+
+    // ─── Audio Node Creation ──────────────────────────────────────────────────
+
+    _initAudioNodes() {
+        if (this.isAudioContextReady) return true;
         
         try {
-            // Get audio context
+            // Get global audio context
             this.audioContext = window.audioContext || window.sharedAudioContext;
             
             if (!this.audioContext) {
-                this.debugLog('⏳ AudioContext not ready - will retry', 'warning');
+                this._log('⏳ AudioContext not ready', 'warning');
                 return false;
             }
             
             // Resume if suspended
             if (this.audioContext.state === 'suspended') {
-                this.audioContext.resume().catch(err => 
-                    this.debugLog(`Resume failed: ${err.message}`, 'warning')
-                );
+                this.audioContext.resume().catch(() => {});
             }
             
             // Create gain node
@@ -134,114 +155,115 @@ class VolumeControl {
             this.makeupGain = this.audioContext.createGain();
             this.makeupGain.gain.value = 1.2;
             
-            // Store globally
+            // Expose globally (will be cleaned up in destroy)
             window.volumeGainNode = this.gainNode;
             window.volumeCompressor = this.compressor;
             window.volumeMakeupGain = this.makeupGain;
             
-            this.isAudioContextInitialized = true;
-            this.debugLog('✅ Volume nodes created', 'success');
-            
+            this.isAudioContextReady = true;
+            this._log('✅ Volume nodes created', 'success');
             return true;
             
         } catch (err) {
-            this.debugLog(`❌ Node creation failed: ${err.message}`, 'error');
+            this._log(`❌ Node creation failed: ${err.message}`, 'error');
             return false;
         }
     }
-    
-    /**
-     * ✅ NEW: Automatic chain integration with retry
-     */
-    attemptChainIntegration() {
-        // Check if reconnection function exists in script.js
+
+    // ─── Chain Integration ────────────────────────────────────────────────────
+
+    _tryIntegration() {
         if (typeof window.reconnectAudioChainWithVolumeControl === 'function') {
             const success = window.reconnectAudioChainWithVolumeControl();
             
             if (success) {
-                this.debugLog('🔗 Volume control integrated into audio chain', 'success');
-                this.stopIntegrationRetries();
+                this._log('🔗 Integrated into audio chain', 'success');
+                this._stopRetries();
                 return true;
             }
         }
         
-        // If integration failed, schedule retries
-        if (this.integrationAttempts < this.maxIntegrationAttempts) {
-            this.integrationAttempts++;
-            this.debugLog(`⏳ Integration retry ${this.integrationAttempts}/${this.maxIntegrationAttempts}`, 'info');
+        // Schedule retries
+        if (this._integrationRetries < this._maxRetries && !this._retryInterval) {
+            this._retryInterval = setInterval(() => {
+                this._integrationRetries++;
+                
+                if (typeof window.reconnectAudioChainWithVolumeControl === 'function') {
+                    const success = window.reconnectAudioChainWithVolumeControl();
+                    if (success) {
+                        this._log('🔗 Integrated (retry)', 'success');
+                        this._stopRetries();
+                    }
+                }
+                
+                if (this._integrationRetries >= this._maxRetries) {
+                    this._log('⚠️ Max integration attempts reached', 'warning');
+                    this._stopRetries();
+                }
+            }, 1000);
             
-            if (!this.integrationInterval) {
-                this.integrationInterval = setInterval(() => {
-                    this.retryIntegration();
-                }, 1000);
-            }
-        } else {
-            this.stopIntegrationRetries();
-            this.debugLog('⚠️ Max integration attempts reached - manual reconnection may be needed', 'warning');
+            this._resources.intervals.add(this._retryInterval);
         }
         
         return false;
     }
-    
-    retryIntegration() {
-        if (typeof window.reconnectAudioChainWithVolumeControl === 'function') {
-            const success = window.reconnectAudioChainWithVolumeControl();
-            
-            if (success) {
-                this.debugLog('🔗 Volume control integrated (retry successful)', 'success');
-                this.stopIntegrationRetries();
-            } else if (this.integrationAttempts >= this.maxIntegrationAttempts) {
-                this.stopIntegrationRetries();
-            } else {
-                this.integrationAttempts++;
-            }
+
+    _stopRetries() {
+        if (this._retryInterval) {
+            clearInterval(this._retryInterval);
+            this._resources.intervals.delete(this._retryInterval);
+            this._retryInterval = null;
         }
     }
-    
-    stopIntegrationRetries() {
-        if (this.integrationInterval) {
-            clearInterval(this.integrationInterval);
-            this.integrationInterval = null;
-        }
-    }
-    
+
     /**
-     * ✅ PUBLIC: Force manual reconnection
+     * Force manual reconnection (public API)
      */
     forceReconnect() {
-        if (!this.isAudioContextInitialized) {
-            this.debugLog('❌ Cannot reconnect - nodes not initialized', 'error');
+        if (!this.isAudioContextReady) {
+            this._log('❌ Cannot reconnect - nodes not ready', 'error');
             return false;
         }
         
         if (typeof window.reconnectAudioChainWithVolumeControl === 'function') {
             const success = window.reconnectAudioChainWithVolumeControl();
             if (success) {
-                this.debugLog('🔗 Manual reconnection successful', 'success');
+                this._log('🔗 Manual reconnection successful', 'success');
                 return true;
             }
         }
         
-        this.debugLog('❌ Manual reconnection failed', 'error');
+        this._log('❌ Manual reconnection failed', 'error');
         return false;
     }
-    
+
+    /**
+     * Reset integration attempts (for new playlist loads)
+     */
+    resetIntegration() {
+        this._integrationRetries = 0;
+        this._stopRetries();
+    }
+
+    // ─── Volume Control ───────────────────────────────────────────────────────
+
     applyVolume(volume, smooth = false, trackAnalysis = null) {
-        let normalizationMultiplier = 1.0;
+        let normMultiplier = 1.0;
         
-        if (this.normalizationEnabled && trackAnalysis && trackAnalysis.loudness) {
-            const trackLoudness = trackAnalysis.loudness;
-            normalizationMultiplier = this.targetLoudness / Math.max(0.1, trackLoudness);
-            normalizationMultiplier = Math.max(0.5, Math.min(2.0, normalizationMultiplier));
+        // Apply normalization if enabled and analysis available
+        if (this.normalizationEnabled && trackAnalysis?.loudness) {
+            normMultiplier = this.targetLoudness / Math.max(0.1, trackAnalysis.loudness);
+            normMultiplier = Math.max(0.5, Math.min(2.0, normMultiplier));
         }
 
-        if (this.isAudioContextInitialized && this.gainNode && this.audioContext) {
+        // Apply through audio nodes if available
+        if (this.isAudioContextReady && this.gainNode && this.audioContext) {
             if (this.audioContext.state === 'suspended') {
-                this.audioContext.resume();
+                this.audioContext.resume().catch(() => {});
             }
             
-            const boostMultiplier = this.boostEnabled ? this.boostAmount : 1.0;
-            const targetGain = volume * boostMultiplier * normalizationMultiplier;
+            const boostMult = this.boostEnabled ? this.boostAmount : 1.0;
+            const targetGain = volume * boostMult * normMultiplier;
             const now = this.audioContext.currentTime;
             
             try {
@@ -254,168 +276,60 @@ class VolumeControl {
                 this.gainNode.gain.value = targetGain;
             }
         } else {
-            this.player.volume = Math.min(1.0, volume * normalizationMultiplier);
+            // Fallback to HTML5 audio
+            this.player.volume = Math.min(1.0, volume * normMultiplier);
         }
     }
-    
-    setupEventListeners() {
-        this.volumeSlider.addEventListener('input', (e) => {
-            const newVolume = parseFloat(e.target.value);
-            this.setVolume(newVolume, true, true);
-        });
-        
-        this.volumeSlider.addEventListener('wheel', (e) => {
-            e.preventDefault();
-            const delta = e.deltaY > 0 ? -0.05 : 0.05;
-            const newVolume = Math.max(0, Math.min(1, this.baseVolume + delta));
-            this.setVolume(newVolume, false, true);
-        });
-        
-        this.volumeIcon.addEventListener('click', () => {
-            this.toggleMute();
-        });
-        
-        this.volumeIcon.addEventListener('dblclick', () => {
-            this.setVolume(1, true);
-        });
-        
-        this.volumeIcon.addEventListener('contextmenu', (e) => {
-            e.preventDefault();
-            this.showVolumeMenu(e.clientX, e.clientY);
-        });
-        
-        this.player.addEventListener('play', () => this.handlePlayEvent());
-        this.player.addEventListener('pause', () => this.handlePauseEvent());
-        this.player.addEventListener('ended', () => this.handlePauseEvent());
-        
-        this.player.addEventListener('volumechange', () => {
-            this.updateUI();
-        });
-    }
-    
-    loadSettings() {
-        try {
-            const savedVolume = localStorage.getItem('playerVolume');
-            if (savedVolume) {
-                this.baseVolume = Math.max(0, Math.min(1, parseFloat(savedVolume)));
-                this.lastVolume = this.baseVolume;
-            }
-            
-            const savedBoost = localStorage.getItem('volumeBoostEnabled');
-            if (savedBoost !== null) {
-                this.boostEnabled = savedBoost === 'true';
-            }
-            
-            const savedBoostAmount = localStorage.getItem('volumeBoostAmount');
-            if (savedBoostAmount) {
-                this.boostAmount = Math.max(1.0, Math.min(3.0, parseFloat(savedBoostAmount)));
-            }
-            
-            const savedNormalization = localStorage.getItem('volumeNormalizationEnabled');
-            if (savedNormalization !== null) {
-                this.normalizationEnabled = savedNormalization === 'true';
-            }
-            
-            const savedFade = localStorage.getItem('volumeFadeEnabled');
-            if (savedFade !== null) {
-                this.fadeEnabled = savedFade === 'true';
-            }
-        } catch (err) {
-            this.debugLog(`Failed to load settings: ${err.message}`, 'error');
-        }
-    }
-    
-    debounceSaveSettings() {
-        clearTimeout(this.volumeSaveTimeout);
-        this.volumeSaveTimeout = setTimeout(() => {
-            try {
-                localStorage.setItem('playerVolume', this.baseVolume.toString());
-                localStorage.setItem('volumeBoostEnabled', this.boostEnabled.toString());
-                localStorage.setItem('volumeBoostAmount', this.boostAmount.toString());
-                localStorage.setItem('volumeNormalizationEnabled', this.normalizationEnabled.toString());
-                localStorage.setItem('volumeFadeEnabled', this.fadeEnabled.toString());
-            } catch (err) {
-                this.debugLog(`Failed to save settings: ${err.message}`, 'error');
-            }
-        }, 500);
-    }
-    
-    updateUI() {
-        const effectiveVolume = this.getEffectiveVolume();
-        const displayVolume = Math.round(this.baseVolume * 100);
-        
-        let displayText = `${displayVolume}%`;
-        if (this.boostEnabled && this.boostAmount > 1) {
-            const effectivePercent = Math.round(effectiveVolume * 100);
-            displayText = `${displayVolume}% (${effectivePercent}%)`;
-        }
-        this.volumePercentage.textContent = displayText;
-        
-        this.volumeSlider.value = this.baseVolume;
-        if (this.volumeSlider.style.setProperty) {
-            this.volumeSlider.style.setProperty('--volume-percent', `${displayVolume}%`);
-        }
-        
-        if (this.isMutedState || this.baseVolume === 0) {
-            this.volumeIcon.textContent = '🔇';
-        } else if (this.baseVolume < 0.3) {
-            this.volumeIcon.textContent = '🔈';
-        } else if (this.baseVolume < 0.7) {
-            this.volumeIcon.textContent = '🔉';
-        } else {
-            this.volumeIcon.textContent = '🔊';
-        }
-        
-        if (this.boostEnabled && this.boostAmount > 1) {
-            this.volumeIcon.style.color = '#ffc107';
-            this.volumeIcon.title = `Volume Boost Active (${Math.round(this.boostAmount * 100)}%)`;
-        } else {
-            this.volumeIcon.style.color = '';
-            this.volumeIcon.title = 'Volume Control';
-        }
-    }
-    
+
     setVolume(volume, addToHistory = true, smooth = false, trackAnalysis = null) {
         volume = Math.max(0, Math.min(1, volume));
         
-        if (this.isFading) {
-            this.stopFade();
-        }
+        if (this.isFading) this._stopFade();
         
         if (addToHistory && volume !== this.baseVolume) {
-            this.addToHistory(volume);
+            this._addToHistory(volume);
         }
         
         this.baseVolume = volume;
-        this.volumeSlider.value = volume;
+        this._dom.slider.value = volume;
         
         this.applyVolume(volume, smooth, trackAnalysis);
         
-        if (this.isMutedState && volume > 0) {
-            this.isMutedState = false;
+        if (this.isMuted && volume > 0) {
+            this.isMuted = false;
             this.player.muted = false;
         }
         
-        this.updateUI();
-        this.debounceSaveSettings();
+        this._updateUI();
+        this._debounceSave();
     }
-    
+
     toggleMute() {
-        if (this.isMutedState) {
-            this.isMutedState = false;
+        if (this.isMuted) {
+            this.isMuted = false;
             this.player.muted = false;
             this.setVolume(this.lastVolume, false);
-            this.debugLog('🔊 Unmuted', 'info');
+            this._log('🔊 Unmuted', 'info');
         } else {
             this.lastVolume = this.baseVolume > 0 ? this.baseVolume : 0.5;
-            this.isMutedState = true;
+            this.isMuted = true;
             this.player.muted = true;
-            this.debugLog('🔇 Muted', 'info');
+            this._log('🔇 Muted', 'info');
         }
-        this.updateUI();
+        this._updateUI();
     }
-    
-    handlePlayEvent() {
+
+    increaseVolume(delta = 0.1) {
+        this.setVolume(Math.min(1, this.baseVolume + delta), true, true);
+    }
+
+    decreaseVolume(delta = 0.1) {
+        this.setVolume(Math.max(0, this.baseVolume - delta), true, true);
+    }
+
+    // ─── Fading ───────────────────────────────────────────────────────────────
+
+    _handlePlayEvent() {
         if (!this.fadeEnabled || this.isFading) return;
         
         const targetVolume = this.baseVolume;
@@ -427,138 +341,141 @@ class VolumeControl {
         
         this.isFading = true;
         
-        this.fadeToVolume(0, targetVolume, this.fadeInDuration, () => {
+        this._fadeToVolume(0, targetVolume, this.fadeInDuration, () => {
             this.isFading = false;
             this.baseVolume = targetVolume;
-            this.volumeSlider.value = targetVolume;
-            this.updateUI();
+            this._dom.slider.value = targetVolume;
+            this._updateUI();
         });
     }
-    
-    handlePauseEvent() {
-        if (!this.fadeEnabled || this.isFading) return;
-        if (this.baseVolume < 0.1) return;
+
+    _handlePauseEvent() {
+        if (!this.fadeEnabled || this.isFading || this.baseVolume < 0.1) return;
         
         this.isFading = true;
         this.volumeBeforeFade = this.baseVolume;
-        const currentVolume = this.baseVolume;
         
-        this.fadeToVolume(currentVolume, 0, this.fadeOutDuration, () => {
+        this._fadeToVolume(this.baseVolume, 0, this.fadeOutDuration, () => {
             this.isFading = false;
         });
     }
-    
-    stopFade() {
-        if (this.fadeInterval) {
-            clearInterval(this.fadeInterval);
-            this.fadeInterval = null;
-        }
+
+    _stopFade() {
+        // Clear any fade intervals
+        this._resources.intervals.forEach(id => {
+            // Check if it's a fade interval by seeing if clearing it stops the fade
+            try { clearInterval(id); } catch (e) {}
+        });
+        this._resources.intervals.clear();
         
-        if (this.isAudioContextInitialized && this.gainNode && this.audioContext) {
-            const now = this.audioContext.currentTime;
-            this.gainNode.gain.cancelScheduledValues(now);
+        // Cancel scheduled values
+        if (this.isAudioContextReady && this.gainNode && this.audioContext) {
+            try {
+                this.gainNode.gain.cancelScheduledValues(this.audioContext.currentTime);
+            } catch (e) {}
         }
         
         this.isFading = false;
         this.volumeBeforeFade = null;
     }
-    
-    fadeToVolume(startVolume, targetVolume, duration, callback) {
-        this.stopFade();
+
+    _fadeToVolume(startVolume, targetVolume, duration, callback) {
+        this._stopFade();
         
         const startTime = Date.now();
         const volumeDelta = targetVolume - startVolume;
         
-        if (this.isAudioContextInitialized && this.gainNode && this.audioContext) {
+        if (this.isAudioContextReady && this.gainNode && this.audioContext) {
             if (this.audioContext.state === 'suspended') {
-                this.audioContext.resume();
+                this.audioContext.resume().catch(() => {});
             }
             
             const now = this.audioContext.currentTime;
-            const boostMultiplier = this.boostEnabled ? this.boostAmount : 1.0;
+            const boostMult = this.boostEnabled ? this.boostAmount : 1.0;
             
             try {
                 this.gainNode.gain.cancelScheduledValues(now);
-                this.gainNode.gain.setValueAtTime(startVolume * boostMultiplier, now);
-                this.gainNode.gain.linearRampToValueAtTime(targetVolume * boostMultiplier, now + duration);
+                this.gainNode.gain.setValueAtTime(startVolume * boostMult, now);
+                this.gainNode.gain.linearRampToValueAtTime(targetVolume * boostMult, now + duration);
             } catch (e) {
-                this.gainNode.gain.value = startVolume * boostMultiplier;
+                this.gainNode.gain.value = startVolume * boostMult;
             }
             
-            let currentDisplayVolume = startVolume;
-            this.fadeInterval = setInterval(() => {
+            const interval = setInterval(() => {
                 const elapsed = (Date.now() - startTime) / 1000;
                 const progress = Math.min(elapsed / duration, 1);
                 
-                currentDisplayVolume = startVolume + (volumeDelta * progress);
-                this.volumeSlider.value = currentDisplayVolume;
+                this._dom.slider.value = startVolume + (volumeDelta * progress);
                 
                 if (progress >= 1) {
-                    clearInterval(this.fadeInterval);
-                    this.fadeInterval = null;
+                    clearInterval(interval);
+                    this._resources.intervals.delete(interval);
                     if (callback) callback();
                 }
             }, 50);
+            
+            this._resources.intervals.add(interval);
         } else {
-            this.fadeInterval = setInterval(() => {
+            const interval = setInterval(() => {
                 const elapsed = (Date.now() - startTime) / 1000;
                 const progress = Math.min(elapsed / duration, 1);
                 
                 const currentVolume = startVolume + (volumeDelta * progress);
                 this.applyVolume(currentVolume);
-                this.volumeSlider.value = currentVolume;
+                this._dom.slider.value = currentVolume;
                 
                 if (progress >= 1) {
-                    clearInterval(this.fadeInterval);
-                    this.fadeInterval = null;
+                    clearInterval(interval);
+                    this._resources.intervals.delete(interval);
                     if (callback) callback();
                 }
             }, 50);
+            
+            this._resources.intervals.add(interval);
         }
     }
-    
+
+    // ─── Feature Toggles ──────────────────────────────────────────────────────
+
     setBoost(enabled, amount = 1.5) {
         this.boostEnabled = enabled;
         this.boostAmount = Math.max(1.0, Math.min(3.0, amount));
         
-        if (enabled && !this.isAudioContextInitialized) {
-            const success = this.initAudioNodes();
-            if (success) {
-                this.attemptChainIntegration();
-            }
+        if (enabled && !this.isAudioContextReady) {
+            const success = this._initAudioNodes();
+            if (success) this._tryIntegration();
         }
         
         this.applyVolume(this.baseVolume, true);
-        this.updateUI();
-        this.debounceSaveSettings();
+        this._updateUI();
+        this._debounceSave();
         
-        const status = enabled ? 'ON' : 'OFF';
         const percent = Math.round(this.boostAmount * 100);
-        this.debugLog(`🎚️ Volume boost: ${status} (${percent}%)`, 'info');
+        this._log(`🎚️ Volume boost: ${enabled ? 'ON' : 'OFF'} (${percent}%)`, 'info');
     }
-    
+
     setFade(enabled) {
         this.fadeEnabled = enabled;
         
         if (!enabled && this.isFading) {
-            this.stopFade();
+            this._stopFade();
             if (this.volumeBeforeFade !== null) {
                 this.setVolume(this.volumeBeforeFade, false);
                 this.volumeBeforeFade = null;
             }
         }
         
-        this.debounceSaveSettings();
-        this.debugLog(`🎵 Smart fade: ${enabled ? 'ON' : 'OFF'}`, 'info');
+        this._debounceSave();
+        this._log(`🎵 Fade: ${enabled ? 'ON' : 'OFF'}`, 'info');
     }
-    
+
     setNormalization(enabled) {
         this.normalizationEnabled = enabled;
         this.applyVolume(this.baseVolume, true);
-        this.debounceSaveSettings();
-        this.debugLog(`⚖️ Smart Normalization: ${enabled ? 'ON' : 'OFF'}`, 'info');
+        this._debounceSave();
+        this._log(`⚖️ Normalization: ${enabled ? 'ON' : 'OFF'}`, 'info');
     }
-    
+
     applyPreset(preset) {
         const presets = {
             silent: 0,
@@ -566,53 +483,35 @@ class VolumeControl {
             normal: 0.7,
             loud: 1.0,
             nightMode: 0.4,
-            cinema: 0.8
+            cinema: 0.8,
         };
         
         if (preset in presets) {
             this.setVolume(presets[preset], true, true);
-            this.debugLog(`🎚️ Applied preset: ${preset}`, 'info');
+            this._log(`🎚️ Preset: ${preset}`, 'info');
         }
     }
-    
+
+    // ─── Track Memory ─────────────────────────────────────────────────────────
+
     rememberTrackVolume(trackId, volume) {
         if (!trackId) return;
         this.trackVolumes.set(trackId, volume);
-        this.saveTrackVolumes();
+        this._saveTrackMemory();
     }
-    
+
     applyTrackVolume(trackId) {
         if (!trackId || !this.trackVolumes.has(trackId)) return false;
         
         const savedVolume = this.trackVolumes.get(trackId);
         this.setVolume(savedVolume, false, true);
-        this.debugLog(`📌 Applied saved volume: ${Math.round(savedVolume * 100)}%`, 'info');
+        this._log(`📌 Restored volume: ${Math.round(savedVolume * 100)}%`, 'info');
         return true;
     }
-    
-    saveTrackVolumes() {
-        try {
-            const data = Array.from(this.trackVolumes.entries());
-            localStorage.setItem('volumeTrackMemory', JSON.stringify(data));
-        } catch (err) {
-            this.debugLog(`Failed to save track volumes: ${err.message}`, 'error');
-        }
-    }
-    
-    loadTrackVolumes() {
-        try {
-            const data = localStorage.getItem('volumeTrackMemory');
-            if (data) {
-                const entries = JSON.parse(data);
-                this.trackVolumes = new Map(entries);
-                this.debugLog(`📚 Loaded ${this.trackVolumes.size} track memories`, 'info');
-            }
-        } catch (err) {
-            this.debugLog(`Failed to load track volumes: ${err.message}`, 'error');
-        }
-    }
-    
-    addToHistory(volume) {
+
+    // ─── History (Undo/Redo) ──────────────────────────────────────────────────
+
+    _addToHistory(volume) {
         this.volumeHistory = this.volumeHistory.slice(0, this.historyIndex + 1);
         this.volumeHistory.push(volume);
         this.historyIndex = this.volumeHistory.length - 1;
@@ -622,30 +521,72 @@ class VolumeControl {
             this.historyIndex--;
         }
     }
-    
+
     undo() {
         if (this.historyIndex > 0) {
             this.historyIndex--;
             const volume = this.volumeHistory[this.historyIndex];
             this.setVolume(volume, false, true);
-            this.debugLog(`↩️ Undo: ${Math.round(volume * 100)}%`, 'info');
+            this._log(`↩️ Undo: ${Math.round(volume * 100)}%`, 'info');
             return true;
         }
         return false;
     }
-    
+
     redo() {
         if (this.historyIndex < this.volumeHistory.length - 1) {
             this.historyIndex++;
             const volume = this.volumeHistory[this.historyIndex];
             this.setVolume(volume, false, true);
-            this.debugLog(`↪️ Redo: ${Math.round(volume * 100)}%`, 'info');
+            this._log(`↪️ Redo: ${Math.round(volume * 100)}%`, 'info');
             return true;
         }
         return false;
     }
-    
-    showVolumeMenu(x, y) {
+
+    // ─── UI ───────────────────────────────────────────────────────────────────
+
+    _updateUI() {
+        if (!this._dom.slider || !this._dom.icon || !this._dom.percent) return;
+        
+        const effectiveVolume = this._getEffectiveVolume();
+        const displayVolume = Math.round(this.baseVolume * 100);
+        
+        let displayText = `${displayVolume}%`;
+        if (this.boostEnabled && this.boostAmount > 1) {
+            const effectivePercent = Math.round(effectiveVolume * 100);
+            displayText = `${displayVolume}% (${effectivePercent}%)`;
+        }
+        this._dom.percent.textContent = displayText;
+        
+        this._dom.slider.value = this.baseVolume;
+        if (this._dom.slider.style.setProperty) {
+            this._dom.slider.style.setProperty('--volume-percent', `${displayVolume}%`);
+        }
+        
+        // Update icon
+        if (this.isMuted || this.baseVolume === 0) {
+            this._dom.icon.textContent = '🔇';
+        } else if (this.baseVolume < 0.3) {
+            this._dom.icon.textContent = '🔈';
+        } else if (this.baseVolume < 0.7) {
+            this._dom.icon.textContent = '🔉';
+        } else {
+            this._dom.icon.textContent = '🔊';
+        }
+        
+        // Boost indicator
+        if (this.boostEnabled && this.boostAmount > 1) {
+            this._dom.icon.style.color = '#ffc107';
+            this._dom.icon.title = `Volume Boost Active (${Math.round(this.boostAmount * 100)}%)`;
+        } else {
+            this._dom.icon.style.color = '';
+            this._dom.icon.title = 'Volume Control';
+        }
+    }
+
+    _showVolumeMenu(x, y) {
+        // Remove existing menu
         const existing = document.getElementById('volume-context-menu');
         if (existing) existing.remove();
         
@@ -662,7 +603,7 @@ class VolumeControl {
             z-index: 10000;
             box-shadow: 0 4px 20px rgba(0,0,0,0.5);
             min-width: 200px;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         `;
         
         const options = [
@@ -671,8 +612,8 @@ class VolumeControl {
             { label: '🔊 Normal (70%)', action: () => this.applyPreset('normal') },
             { label: '📢 Loud (100%)', action: () => this.applyPreset('loud') },
             { separator: true },
-            { label: `🌙 Night Mode (40%)`, action: () => this.applyPreset('nightMode') },
-            { label: `🎬 Cinema (80%)`, action: () => this.applyPreset('cinema') },
+            { label: '🌙 Night Mode (40%)', action: () => this.applyPreset('nightMode') },
+            { label: '🎬 Cinema (80%)', action: () => this.applyPreset('cinema') },
             { separator: true },
             { 
                 label: `⚡ Boost: ${this.boostEnabled ? 'ON ✓' : 'OFF'}`, 
@@ -685,7 +626,7 @@ class VolumeControl {
             { 
                 label: `⚖️ Normalize: ${this.normalizationEnabled ? 'ON ✓' : 'OFF'}`, 
                 action: () => this.setNormalization(!this.normalizationEnabled) 
-            }
+            },
         ];
         
         options.forEach(opt => {
@@ -716,80 +657,224 @@ class VolumeControl {
         
         document.body.appendChild(menu);
         
-        const closeMenu = (e) => {
+        // Keep within viewport
+        const rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            menu.style.left = `${x - rect.width}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+            menu.style.top = `${y - rect.height}px`;
+        }
+        
+        // Close on outside click
+        const closeHandler = (e) => {
             if (!menu.contains(e.target)) {
                 menu.remove();
-                document.removeEventListener('click', closeMenu);
+                document.removeEventListener('click', closeHandler);
             }
         };
         
-        setTimeout(() => document.addEventListener('click', closeMenu), 10);
+        setTimeout(() => {
+            document.addEventListener('click', closeHandler);
+            this._resources.menuCleanup = closeHandler;
+        }, 10);
     }
-    
-    getEffectiveVolume() {
-        return Math.min(1.0, this.baseVolume * (this.boostEnabled ? this.boostAmount : 1.0));
+
+    // ─── Event Binding ────────────────────────────────────────────────────────
+
+    _bindEvents() {
+        const wire = (el, event, handler) => {
+            if (!el) return;
+            el.addEventListener(event, handler);
+            this._resources.listeners.push({ element: el, event, handler });
+        };
+        
+        // Slider
+        wire(this._dom.slider, 'input', e => {
+            const newVolume = parseFloat(e.target.value);
+            this.setVolume(newVolume, true, true);
+        });
+        
+        // Wheel (debounced)
+        wire(this._dom.slider, 'wheel', e => {
+            e.preventDefault();
+            
+            clearTimeout(this._wheelTimer);
+            this._wheelTimer = setTimeout(() => {
+                const delta = e.deltaY > 0 ? -0.05 : 0.05;
+                const newVolume = Math.max(0, Math.min(1, this.baseVolume + delta));
+                this.setVolume(newVolume, false, true);
+            }, 50);
+        });
+        
+        // Icon clicks
+        wire(this._dom.icon, 'click', () => this.toggleMute());
+        wire(this._dom.icon, 'dblclick', () => this.setVolume(1, true));
+        wire(this._dom.icon, 'contextmenu', e => {
+            e.preventDefault();
+            this._showVolumeMenu(e.clientX, e.clientY);
+        });
+        
+        // Player events
+        wire(this.player, 'play', () => this._handlePlayEvent());
+        wire(this.player, 'pause', () => this._handlePauseEvent());
+        wire(this.player, 'ended', () => this._handlePauseEvent());
+        wire(this.player, 'volumechange', () => this._updateUI());
     }
-    
-    increaseVolume(delta = 0.1) {
-        const newVolume = Math.min(1, this.baseVolume + delta);
-        this.setVolume(newVolume, true, true);
+
+    // ─── Persistence ──────────────────────────────────────────────────────────
+
+    _loadSettings() {
+        try {
+            const vol = localStorage.getItem('playerVolume');
+            if (vol) {
+                this.baseVolume = Math.max(0, Math.min(1, parseFloat(vol)));
+                this.lastVolume = this.baseVolume;
+            }
+            
+            const boost = localStorage.getItem('volumeBoostEnabled');
+            if (boost !== null) this.boostEnabled = boost === 'true';
+            
+            const boostAmt = localStorage.getItem('volumeBoostAmount');
+            if (boostAmt) this.boostAmount = Math.max(1.0, Math.min(3.0, parseFloat(boostAmt)));
+            
+            const norm = localStorage.getItem('volumeNormalizationEnabled');
+            if (norm !== null) this.normalizationEnabled = norm === 'true';
+            
+            const fade = localStorage.getItem('volumeFadeEnabled');
+            if (fade !== null) this.fadeEnabled = fade === 'true';
+        } catch (err) {
+            this._log(`Failed to load settings: ${err.message}`, 'error');
+        }
     }
-    
-    decreaseVolume(delta = 0.1) {
-        const newVolume = Math.max(0, this.baseVolume - delta);
-        this.setVolume(newVolume, true, true);
+
+    _debounceSave() {
+        clearTimeout(this._saveTimer);
+        this._saveTimer = setTimeout(() => {
+            try {
+                localStorage.setItem('playerVolume', this.baseVolume.toString());
+                localStorage.setItem('volumeBoostEnabled', this.boostEnabled.toString());
+                localStorage.setItem('volumeBoostAmount', this.boostAmount.toString());
+                localStorage.setItem('volumeNormalizationEnabled', this.normalizationEnabled.toString());
+                localStorage.setItem('volumeFadeEnabled', this.fadeEnabled.toString());
+            } catch (err) {
+                this._log(`Failed to save settings: ${err.message}`, 'error');
+            }
+        }, 500);
     }
-    
+
+    _loadTrackMemory() {
+        try {
+            const data = localStorage.getItem('volumeTrackMemory');
+            if (data) {
+                const entries = JSON.parse(data);
+                this.trackVolumes = new Map(entries);
+                this._log(`📚 Loaded ${this.trackVolumes.size} track volumes`, 'info');
+            }
+        } catch (err) {
+            this._log(`Failed to load track memory: ${err.message}`, 'error');
+        }
+    }
+
+    _saveTrackMemory() {
+        try {
+            const data = Array.from(this.trackVolumes.entries());
+            localStorage.setItem('volumeTrackMemory', JSON.stringify(data));
+        } catch (err) {
+            this._log(`Failed to save track memory: ${err.message}`, 'error');
+        }
+    }
+
+    // ─── Public Getters ───────────────────────────────────────────────────────
+
     getVolume() {
         return this.baseVolume;
     }
-    
-    isMuted() {
-        return this.isMutedState;
+
+    isMutedState() {
+        return this.isMuted;
     }
-    
+
     isBoostEnabled() {
         return this.boostEnabled;
     }
-    
+
     getBoostAmount() {
         return this.boostAmount;
     }
-    
+
+    _getEffectiveVolume() {
+        return Math.min(1.0, this.baseVolume * (this.boostEnabled ? this.boostAmount : 1.0));
+    }
+
+    // ─── Cleanup ──────────────────────────────────────────────────────────────
+
     destroy() {
-        this.stopFade();
-        this.stopIntegrationRetries();
+        this._log('🧹 Destroying volume control...', 'info');
         
-        if (this.volumeSaveTimeout) {
-            clearTimeout(this.volumeSaveTimeout);
+        // Stop any active fades
+        this._stopFade();
+        
+        // Stop integration retries
+        this._stopRetries();
+        
+        // Clear timers
+        clearTimeout(this._saveTimer);
+        clearTimeout(this._wheelTimer);
+        
+        // Clear all intervals
+        this._resources.intervals.forEach(id => clearInterval(id));
+        this._resources.intervals.clear();
+        
+        // Clear all timeouts
+        this._resources.timeouts.forEach(id => clearTimeout(id));
+        this._resources.timeouts.clear();
+        
+        // Remove all event listeners
+        this._resources.listeners.forEach(({ element, event, handler }) => {
+            try {
+                element.removeEventListener(event, handler);
+            } catch (e) {}
+        });
+        this._resources.listeners = [];
+        
+        // Remove menu cleanup handler
+        if (this._resources.menuCleanup) {
+            document.removeEventListener('click', this._resources.menuCleanup);
         }
         
+        // Remove any open menu
+        const menu = document.getElementById('volume-context-menu');
+        if (menu) menu.remove();
+        
+        // Disconnect audio nodes
         if (this.gainNode) {
-            try {
-                this.gainNode.disconnect();
-            } catch (e) {}
+            try { this.gainNode.disconnect(); } catch (e) {}
         }
-        
         if (this.compressor) {
-            try {
-                this.compressor.disconnect();
-            } catch (e) {}
+            try { this.compressor.disconnect(); } catch (e) {}
         }
-        
         if (this.makeupGain) {
-            try {
-                this.makeupGain.disconnect();
-            } catch (e) {}
+            try { this.makeupGain.disconnect(); } catch (e) {}
         }
         
-        if (this.audioContext && this.audioContext.state !== 'closed') {
-            this.audioContext.close();
-        }
+        // Clean up global references
+        if (window.volumeGainNode === this.gainNode) delete window.volumeGainNode;
+        if (window.volumeCompressor === this.compressor) delete window.volumeCompressor;
+        if (window.volumeMakeupGain === this.makeupGain) delete window.volumeMakeupGain;
         
-        this.debugLog('🔇 Volume control destroyed', 'info');
+        // Clear maps and arrays
+        this.trackVolumes.clear();
+        this.volumeHistory = [];
+        
+        // Don't close the audio context if it's shared
+        // The main app will handle that
+        
+        this._log('✅ Volume control destroyed', 'success');
     }
 }
 
+// ─── Module Export ────────────────────────────────────────────────────────────
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = VolumeControl;
 }
