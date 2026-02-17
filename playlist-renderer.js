@@ -426,25 +426,37 @@ class EnhancedPlaylistRenderer {
     // ─── Rendering ────────────────────────────────────────────────────────────
 
     _render() {
-        if (this.filteredPlaylist.length === 0) { this._renderEmpty(); return; }
-
-        if (this.filteredPlaylist.length < 100) {
-            this._renderAll();
-        } else {
-            this._renderVirtual();
+        if (this.filteredPlaylist.length === 0) { 
+            this._renderEmpty(); 
+            return; 
         }
 
+        // ALWAYS use simple rendering for reliability
+        this._renderAll();
         this._updateUI();
     }
 
     _renderAll() {
         const frag = document.createDocumentFragment();
-        this.filteredPlaylist.forEach((track, i) => frag.appendChild(this._createItem(track, i)));
+        
+        // Create ALL items - no limit
+        for (let i = 0; i < this.filteredPlaylist.length; i++) {
+            const track = this.filteredPlaylist[i];
+            const item = this._createItem(track, i);
+            frag.appendChild(item);
+        }
+        
+        // Clear and append
         this._dom.list.innerHTML = '';
         this._dom.list.appendChild(frag);
 
-        // Observe all items for lazy loading
-        this._dom.list.querySelectorAll('.pl-item').forEach(el => this._lazyObserver.observe(el));
+        // Setup lazy loading for images
+        requestAnimationFrame(() => {
+            const items = this._dom.list.querySelectorAll('.pl-item');
+            items.forEach(item => {
+                this._lazyObserver.observe(item);
+            });
+        });
     }
 
     _renderVirtual() {
@@ -514,11 +526,20 @@ class EnhancedPlaylistRenderer {
         const artist = this._esc(track.metadata?.artist || 'Unknown Artist');
         const album  = track.metadata?.album ? this._esc(track.metadata.album) : '';
 
-        // Thumbnail — use data-src for lazy loading
+        // Thumbnail — use data-src for lazy loading, but show immediately for first ~20 items
         const imgSrc = track.metadata?.optimizedImage || track.metadata?.image;
-        const thumbHTML = imgSrc
-            ? `<img data-src="${imgSrc}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:5px;">`
-            : `<span class="pl-placeholder">🎵</span>`;
+        let thumbHTML;
+        
+        if (imgSrc) {
+            // Load first 20 images immediately for better UX
+            if (displayIndex < 20) {
+                thumbHTML = `<img src="${imgSrc}" alt="Album art" class="pl-thumb-img">`;
+            } else {
+                thumbHTML = `<img data-src="${imgSrc}" alt="Album art" class="pl-thumb-img">`;
+            }
+        } else {
+            thumbHTML = `<span class="pl-placeholder">🎵</span>`;
+        }
 
         // Badges
         const badges = [];
