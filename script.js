@@ -343,7 +343,7 @@ class MusicPlayerApp {
                 this._setWindowRef('sharedMidFilter',    ap.midFilter);
                 this._setWindowRef('sharedTrebleFilter', ap.trebleFilter);
 
-                document.dispatchEvent(new CustomEvent('audioContextReady'));
+                // 'audioContextReady' is dispatched by AudioPipeline.init() — do not re-dispatch here.
                 this.debugLog('✅ AudioPipeline initialized', 'success');
                 this._initAudioSubManagers();
             }
@@ -1043,6 +1043,7 @@ class MusicPlayerApp {
         this.managers.performance?.cleanupForTrackChange();
 
         this.state.currentTrackIndex = index;
+        this.managers.audioBuffer?.setCurrentIndex(index);
         const track = this.state.playlist[index];
 
         this.debugLog(`Loading track ${index + 1}: ${track.fileName}`, 'info');
