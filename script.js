@@ -1,46 +1,34 @@
 /* ============================================
-   Ultimate Local Music Player — v5.0
-   Resource-safe, properly structured
+   Ultimate Local Music Player — v5.1
+   Fully resource-safe, bug-fixed, well-structured
    ============================================ */
 
-// ─── Audio Chain Reconnection Helper ─────────────────────────────────────────
+// ─── Global Audio Chain Reconnect Helper ─────────────────────────────────────
 // Chain: source → bass → mid → treble → volumeGain → compressor → makeupGain → destination
+// NOTE: volumeGainNode / volumeCompressor / volumeMakeupGain are provided by VolumeControl.
 window.reconnectAudioChainWithVolumeControl = function () {
+    const required = [
+        'sharedAudioSource', 'sharedBassFilter',
+        'sharedMidFilter',   'sharedTrebleFilter', 'audioContext',
+    ];
+    const volumeNodes = ['volumeGainNode', 'volumeCompressor', 'volumeMakeupGain'];
+
+    const missing = [...required, ...volumeNodes].filter(k => !window[k]);
+    if (missing.length) {
+        console.log('⏳ Audio chain reconnect: waiting for', missing.join(', '));
+        return false;
+    }
+
     try {
-        if (
-            !window.sharedAudioSource  ||
-            !window.sharedBassFilter   ||
-            !window.sharedMidFilter    ||
-            !window.sharedTrebleFilter ||
-            !window.audioContext
-        ) {
-            console.log('⏳ Audio pipeline not ready for reconnection');
-            return false;
-        }
-        if (!window.volumeGainNode || !window.volumeCompressor || !window.volumeMakeupGain) {
-            console.log('⏳ Volume control nodes not ready');
-            return false;
-        }
-
-        console.log('🔗 Reconnecting audio chain…');
-
-        [
-            window.sharedAudioSource,
-            window.sharedBassFilter,
-            window.sharedMidFilter,
-            window.sharedTrebleFilter,
-            window.volumeGainNode,
-            window.volumeCompressor,
+        const nodes = [
+            window.sharedAudioSource, window.sharedBassFilter,
+            window.sharedMidFilter,   window.sharedTrebleFilter,
+            window.volumeGainNode,    window.volumeCompressor,
             window.volumeMakeupGain,
-        ].forEach(n => { try { n.disconnect(); } catch (_) {} });
-
-        window.sharedAudioSource.connect(window.sharedBassFilter);
-        window.sharedBassFilter.connect(window.sharedMidFilter);
-        window.sharedMidFilter.connect(window.sharedTrebleFilter);
-        window.sharedTrebleFilter.connect(window.volumeGainNode);
-        window.volumeGainNode.connect(window.volumeCompressor);
-        window.volumeCompressor.connect(window.volumeMakeupGain);
-        window.volumeMakeupGain.connect(window.audioContext.destination);
+        ];
+        nodes.forEach(n => { try { n.disconnect(); } catch (_) {} });
+        for (let i = 0; i < nodes.length - 1; i++) nodes[i].connect(nodes[i + 1]);
+        nodes[nodes.length - 1].connect(window.audioContext.destination);
 
         console.log('✅ Audio chain reconnected');
         return true;
@@ -51,18 +39,23 @@ window.reconnectAudioChainWithVolumeControl = function () {
 };
 
 // ─── MusicPlayerApp ──────────────────────────────────────────────────────────
+
 class MusicPlayerApp {
+
+    // ═══════════════════════════════════════════════════════════
+    // CONSTRUCTION
+    // ═══════════════════════════════════════════════════════════
 
     constructor() {
         this.state = {
             playlist:                  [],
             currentTrackIndex:         -1,
             isShuffled:                false,
-            shuffledPlaylist:          [], 
-            loopMode:                  'off',
+            shuffledPlaylist:          [],
+            loopMode:                  'off',   // 'off' | 'all' | 'one'
             debugMode:                 false,
             isSeekingProg:             false,
-            compactMode:               'full',
+            compactMode:               'full',  // 'full' | 'compact' | 'mini'
             folderHandle:              null,
             backgroundAnalysisRunning: false,
             initialized:               false,
@@ -70,19 +63,17 @@ class MusicPlayerApp {
         };
 
         this.config = {
-            SEEK_DEBOUNCE_DELAY_MS: 100,
+            SEEK_RESUME_DELAY_MS: 150,
         };
 
-        this.managers  = {};
-        this.elements  = {};
+        this.managers   = {};
+        this.elements   = {};
         this.colorCache = new Map();
 
         this.resources = {
             blobURLs:       new Set(),
             eventListeners: [],
-            intervals:      new Set(),
-            timeouts:       new Set(),
-            windowRefs:     new Set(),    // Track window.* assignments
+            windowRefs:     new Set(),
         };
 
         // rAF state
@@ -95,127 +86,9 @@ class MusicPlayerApp {
         this._boundRafTick = this._rafTick.bind(this);
     }
 
-    // ── Helper: Track window assignments ─────────────────────────────────────
-
-    _setWindowRef(key, value) {
-        window[key] = value;
-        this.resources.windowRefs.add(key);
-    }
-
-    // ── Color Extraction ──────────────────────────────────────────────────────
-
-    extractAlbumColor(imageElement) {
-        if (!imageElement || !imageElement.complete || !imageElement.naturalWidth) {
-            return null;
-        }
-
-        try {
-            const cacheKey = imageElement.src;
-            if (this.colorCache.has(cacheKey)) {
-                return this.colorCache.get(cacheKey);
-            }
-
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            
-            const size = 50;
-            canvas.width = size;
-            canvas.height = size;
-            
-            ctx.drawImage(imageElement, 0, 0, size, size);
-            const imageData = ctx.getImageData(0, 0, size, size);
-            const data = imageData.data;
-            
-            let r = 0, g = 0, b = 0, count = 0;
-            
-            for (let i = 0; i < data.length; i += 4) {
-                const pr = data[i];
-                const pg = data[i + 1];
-                const pb = data[i + 2];
-                const brightness = (pr + pg + pb) / 3;
-                
-                if (brightness > 20 && brightness < 235) {
-                    r += pr;
-                    g += pg;
-                    b += pb;
-                    count++;
-                }
-            }
-            
-            if (count === 0) return null;
-            
-            r = Math.floor(r / count);
-            g = Math.floor(g / count);
-            b = Math.floor(b / count);
-            
-            const color = {
-                r, g, b,
-                rgb: `rgb(${r}, ${g}, ${b})`,
-                rgba: (alpha) => `rgba(${r}, ${g}, ${b}, ${alpha})`,
-                darken: (amount) => {
-                    const nr = Math.max(0, r - amount);
-                    const ng = Math.max(0, g - amount);
-                    const nb = Math.max(0, b - amount);
-                    return `rgb(${nr}, ${ng}, ${nb})`;
-                },
-                lighten: (amount) => {
-                    const nr = Math.min(255, r + amount);
-                    const ng = Math.min(255, g + amount);
-                    const nb = Math.min(255, b + amount);
-                    return `rgb(${nr}, ${ng}, ${nb})`;
-                }
-            };
-            
-            this.colorCache.set(cacheKey, color);
-            return color;
-        } catch (err) {
-            this.debugLog(`Color extraction failed: ${err.message}`, 'warning');
-            return null;
-        }
-    }
-
-    applyAlbumColor(color) {
-        if (!color) {
-            if (this.elements.metadataContainer) {
-                this.elements.metadataContainer.style.background = 'linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)';
-                this.elements.metadataContainer.style.boxShadow = '0 8px 32px rgba(220, 53, 69, 0.2)';
-            }
-            
-            if (!document.body.classList.contains('custom-bg')) {
-                document.body.style.background = '#0a0a0a';
-                document.body.style.backgroundImage = `
-                    radial-gradient(circle at top right, rgba(220, 53, 69, 0.05), transparent 40%),
-                    radial-gradient(circle at bottom left, rgba(0, 123, 255, 0.05), transparent 40%)
-                `;
-            }
-            
-            this._setWindowRef('albumColors', null);
-            return;
-        }
-        
-        this._setWindowRef('albumColors', color);
-
-        if (this.managers.lyrics) {
-            this.managers.lyrics.setDominantColor(color);
-        }
-        
-        if (this.elements.metadataContainer) {
-            const gradient = `linear-gradient(135deg, ${color.darken(40)} 0%, ${color.darken(60)} 100%)`;
-            this.elements.metadataContainer.style.background = gradient;
-            this.elements.metadataContainer.style.boxShadow = `0 8px 32px ${color.rgba(0.4)}`;
-            this.elements.metadataContainer.style.border = `1px solid ${color.rgba(0.3)}`;
-        }
-        
-        if (!document.body.classList.contains('custom-bg')) {
-            document.body.style.background = '#0a0a0a';
-            document.body.style.backgroundImage = `
-                radial-gradient(circle at top right, ${color.rgba(0.15)}, transparent 40%),
-                radial-gradient(circle at bottom left, ${color.rgba(0.1)}, transparent 40%)
-            `;
-        }
-    }
-
-    // ── Bootstrap ─────────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // BOOTSTRAP
+    // ═══════════════════════════════════════════════════════════
 
     async init() {
         if (this.state.initialized) {
@@ -223,28 +96,41 @@ class MusicPlayerApp {
             return;
         }
         try {
-            this.cacheElements();
-            await this.initializeManagers();
-            this.initializeAudio();
-            this.setupEventListeners();
-            this.setupKeyboardShortcuts();
-            this.setupSidebarButtons();
-            await this.restoreState();
-            this.connectManagersToPerformance();
-            this.setupFullscreenLyricsToggle();
+            this._cacheElements();
+            await this._initManagers();
+            this._initAudio();
+            this._setupEventListeners();
+            this._setupKeyboardShortcuts();
+            this._setupSidebarButtons();
+            await this._restoreState();
+            this._connectManagersToPerformance();
+            this._setupFullscreenLyricsToggle();
+            this._exposeGlobals();
+
             this.state.initialized = true;
-            this.debugLog('✅ Music player initialized (v5.0)', 'success');
+            this.debugLog('✅ Music player initialized (v5.1)', 'success');
         } catch (err) {
             this.debugLog(`❌ Init error: ${err.message}`, 'error');
             console.error(err);
         }
     }
 
-    // ── Element cache ─────────────────────────────────────────────────────────
+    /** Expose a minimal global API that other scripts (e.g. mobile.js) may call. */
+    _exposeGlobals() {
+        // Compact-mode setter — mobile.js uses this
+        window.setCompactMode = mode => {
+            this.state.compactMode = mode;
+            this._applyViewMode(mode);
+            localStorage.setItem('compactMode', mode);
+        };
+    }
 
-    cacheElements() {
+    // ═══════════════════════════════════════════════════════════
+    // ELEMENT CACHE
+    // ═══════════════════════════════════════════════════════════
+
+    _cacheElements() {
         const $ = id => document.getElementById(id);
-
         this.elements = {
             player:           $('audio-player'),
             playPauseButton:  $('play-pause-button'),
@@ -264,66 +150,329 @@ class MusicPlayerApp {
             trackTitle:       $('track-title'),
             trackArtist:      $('track-artist'),
             trackAlbum:       $('track-album'),
-            progressContainer:    $('custom-progress-container'),
-            progressBar:          $('progress-bar'),
-            currentTimeDisplay:   $('current-time'),
-            durationDisplay:      $('duration'),
-            lyricsDisplay:              $('lyrics-display'),
-            exportLyricsButton:         $('export-lyrics-button'),
-            fullscreenLyricsContainer:  $('fullscreen-lyrics'),
-            fullscreenLyricsContent:    $('fullscreen-lyrics-content'),
-            fullscreenLyricsToggle:     $('fullscreen-lyrics-toggle'),
-            fullscreenLyricsCloseBtn:   $('lyrics-close-btn'),
-            fullscreenLyricsPrevBtn:    $('lyrics-prev-btn'),
-            fullscreenLyricsNextBtn:    $('lyrics-next-btn'),
-            eqBassSlider:   $('eq-bass'),
-            eqMidSlider:    $('eq-mid'),
-            eqTrebleSlider: $('eq-treble'),
+            progressContainer:  $('custom-progress-container'),
+            progressBar:        $('progress-bar'),
+            currentTimeDisplay: $('current-time'),
+            durationDisplay:    $('duration'),
+            lyricsDisplay:           $('lyrics-display'),
+            exportLyricsButton:      $('export-lyrics-button'),
+            fsLyricsContainer: $('fullscreen-lyrics'),
+            fsLyricsContent:   $('fullscreen-lyrics-content'),
+            fsLyricsToggle:    $('fullscreen-lyrics-toggle'),
+            fsLyricsClose:     $('lyrics-close-btn'),
+            fsLyricsPrev:      $('lyrics-prev-btn'),
+            fsLyricsNext:      $('lyrics-next-btn'),
+            eqBass:         $('eq-bass'),
+            eqMid:          $('eq-mid'),
+            eqTreble:       $('eq-treble'),
             bassValue:      $('bass-value'),
             midValue:       $('mid-value'),
             trebleValue:    $('treble-value'),
             eqResetBtn:     $('eq-reset'),
-            debugToggle:       $('debug-toggle'),
-            debugPanel:        $('debug-panel'),
-            dropZone:          $('drop-zone'),
-            metadataContainer: $('metadata-container'),
-            mainContent:       $('main-content'),
-            sectionPlaylist:   $('playlist-container'),
-            sectionVolume:     $('volume-control'),
-            sectionLyrics:     $('lyrics-display'),
-            sectionEQ:         $('equalizer-control'),
-            sectionDropZone:   $('drop-zone'),
+            debugToggle:  $('debug-toggle'),
+            debugPanel:   $('debug-panel'),
+            dropZone:     $('drop-zone'),
+            mainContent:  $('main-content'),
+            // View-mode sections
+            sectionPlaylist: $('playlist-container'),
+            sectionVolume:   $('volume-control'),
+            sectionLyrics:   $('lyrics-display'),
+            sectionEQ:       $('equalizer-control'),
+            sectionDropZone: $('drop-zone'),
         };
     }
 
-    // ── View mode ─────────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // MANAGERS
+    // ═══════════════════════════════════════════════════════════
 
-    applyViewMode(mode) {
+    async _initManagers() {
+        const log = this.debugLog.bind(this);
+
+        // Core utilities
+        this._tryInitManager('worker',        () => typeof createMusicPlayerWorkerManager !== 'undefined'
+            ? createMusicPlayerWorkerManager(log) : null);
+        this._tryInitManager('ui',            () => typeof UIManager !== 'undefined'           ? new UIManager(log) : null);
+        this._tryInitManager('performance',   () => typeof PerformanceManager !== 'undefined'  ? new PerformanceManager(log) : null);
+        this._tryInitManager('imageOptimizer',() => typeof ImageOptimizer !== 'undefined'      ? new ImageOptimizer(log) : null);
+
+        // Audio buffer manager
+        if (typeof AudioBufferManager !== 'undefined') {
+            const abm = new AudioBufferManager(log);
+            abm.setPlaylist(this.state.playlist);
+            abm.setCallbacks({
+                onLoadStart:    (_i, name)          => this._setStatus(`Loading: ${name}`),
+                onLoadProgress: (_i, name, lo, tot) => this._setStatus(`Loading: ${name} (${Math.round((lo/tot)*100)}%)`),
+                onLoadComplete: ()                  => {},
+                onLoadError:    (_i, name, err)     => {
+                    this.debugLog(`❌ Buffer load failed: ${name} — ${err.message}`, 'error');
+                    this.managers.ui?.showToast(`Failed to load: ${name}`, 'error');
+                },
+                onMemoryWarning: pct => this.debugLog(`⚠️ Buffer memory at ${pct.toFixed(1)}%`, 'warning'),
+            });
+            this.managers.audioBuffer = abm;
+            this._setWindowRef('audioBufferManager', abm);
+        }
+
+        // Parsing & editing
+        this._tryInitManager('metadata',       () => typeof MetadataParser    !== 'undefined' ? new MetadataParser(log) : null);
+        this._tryInitManager('vtt',            () => typeof VTTParser         !== 'undefined' ? new VTTParser(log) : null);
+        this._tryInitManager('errorRecovery',  () => typeof ErrorRecovery     !== 'undefined' ? new ErrorRecovery(log) : null);
+        this._tryInitManager('analysisParser', () => typeof AnalysisTextParser!== 'undefined' ? new AnalysisTextParser(log) : null);
+        this._tryInitManager('metadataEditor', () => typeof MetadataEditor    !== 'undefined' ? new MetadataEditor(log) : null);
+        this._tryInitManager('analyzer',       () => typeof MusicAnalyzer     !== 'undefined' ? new MusicAnalyzer(log) : null);
+        this._tryInitManager('customMetadata', () => typeof CustomMetadataStore!== 'undefined'? new CustomMetadataStore() : null);
+        this._tryInitManager('folderPersistence',()=> typeof FolderPersistence !== 'undefined'? new FolderPersistence() : null);
+
+        // File loading
+        if (typeof EnhancedFileLoadingManager !== 'undefined') {
+            const flm = new EnhancedFileLoadingManager(log);
+            flm.init({
+                metadataParser:      this.managers.metadata,
+                vttParser:           this.managers.vtt,
+                analysisParser:      this.managers.analysisParser,
+                customMetadataStore: this.managers.customMetadata,
+                analyzer:            this.managers.analyzer,
+                workerManager:       this.managers.worker,
+                imageOptimizer:      this.managers.imageOptimizer,
+            });
+            this.managers.fileLoading = flm;
+            this._setWindowRef('fileLoadingManager', flm);
+            this.debugLog('✅ FileLoadingManager initialized', 'success');
+        }
+
+        // Custom background
+        if (typeof CustomBackgroundManager !== 'undefined') {
+            this.managers.customBackground = new CustomBackgroundManager(log);
+            this._setWindowRef('customBackground', this.managers.customBackground);
+            this.debugLog('✅ CustomBackgroundManager initialized', 'success');
+        }
+
+        // Playlist renderer
+        if (typeof EnhancedPlaylistRenderer !== 'undefined') {
+            const pr = new EnhancedPlaylistRenderer(log);
+            pr.init({
+                playlistContainer: document.getElementById('playlist-container'),
+                playlistItems:     this.elements.playlistItems,
+                playlistSearch:    this.elements.playlistSearch,
+                clearButton:       this.elements.clearButton,
+                jumpToCurrentBtn:  this.elements.jumpToCurrentBtn,
+            });
+            pr.setCallbacks({
+                onTrackClick: idx => this.loadTrack(idx),
+                onEditClick:  idx => this._editTrackMetadata(idx),
+            });
+            this.managers.playlistRenderer = pr;
+            this._setWindowRef('playlistRenderer', pr);
+            this.debugLog('✅ PlaylistRenderer initialized', 'success');
+        }
+
+        // Lyrics
+        if (typeof LyricsManager !== 'undefined') {
+            const lm = new LyricsManager(log);
+            lm.init({
+                lyricsDisplay:       this.elements.lyricsDisplay,
+                exportButton:        this.elements.exportLyricsButton,
+                fullscreenToggle:    this.elements.fsLyricsToggle,
+                fullscreenContainer: this.elements.fsLyricsContainer,
+                fullscreenContent:   this.elements.fsLyricsContent,
+                fullscreenCloseBtn:  this.elements.fsLyricsClose,
+                fullscreenPrevBtn:   this.elements.fsLyricsPrev,
+                fullscreenNextBtn:   this.elements.fsLyricsNext,
+            }, this.elements.player);
+
+            lm.onNavigationRequest = action => {
+                if (action === 'previous') this.playPrevious();
+                else if (action === 'next') this.playNext();
+            };
+            lm.onGetTrackInfo = () => {
+                if (this.state.currentTrackIndex === -1) return {};
+                const t = this.state.playlist[this.state.currentTrackIndex];
+                return {
+                    title:  t.metadata?.title  || t.fileName,
+                    artist: t.metadata?.artist || 'Unknown Artist',
+                };
+            };
+
+            this.managers.lyrics = lm;
+            this._setWindowRef('lyricsManager', lm);
+            this.debugLog('✅ LyricsManager initialized', 'success');
+        }
+
+        this.debugLog('✅ All managers initialized', 'success');
+    }
+
+    _tryInitManager(key, factory) {
+        try {
+            const m = factory();
+            if (m) {
+                this.managers[key] = m;
+                this._setWindowRef(`${key}Manager`, m);
+            }
+        } catch (err) {
+            this.debugLog(`⚠️ ${key} init failed: ${err.message}`, 'warning');
+        }
+    }
+
+    _connectManagersToPerformance() {
+        const pm = this.managers.performance;
+        if (!pm) { this.debugLog('⚠️ No PerformanceManager', 'warning'); return; }
+
+        ['audioBuffer', 'lyrics', 'audioPipeline', 'ui'].forEach(key => {
+            if (this.managers[key]) pm.connectManager(key, this.managers[key]);
+        });
+
+        this.debugLog('✅ Managers connected to PerformanceManager', 'success');
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // AUDIO INITIALISATION
+    // ═══════════════════════════════════════════════════════════
+
+    _initAudio() {
+        try {
+            if (typeof AudioPipeline !== 'undefined' && this.elements.player) {
+                const ap = new AudioPipeline(this.debugLog.bind(this));
+                ap.init(this.elements.player);
+                this.managers.audioPipeline = ap;
+
+                this._setWindowRef('audioPipeline',      ap);
+                this._setWindowRef('audioContext',       ap.audioContext);
+                this._setWindowRef('sharedAudioSource',  ap.audioSource);
+                this._setWindowRef('sharedBassFilter',   ap.bassFilter);
+                this._setWindowRef('sharedMidFilter',    ap.midFilter);
+                this._setWindowRef('sharedTrebleFilter', ap.trebleFilter);
+
+                document.dispatchEvent(new CustomEvent('audioContextReady'));
+                this.debugLog('✅ AudioPipeline initialized', 'success');
+                this._initAudioSubManagers();
+            }
+
+            if (typeof VolumeControl !== 'undefined' && this.elements.player) {
+                this.managers.volume = new VolumeControl(this.elements.player, this.debugLog.bind(this));
+                this._setWindowRef('volumeControl', this.managers.volume);
+            }
+
+            if (typeof CrossfadeManager !== 'undefined') {
+                this.managers.crossfade = new CrossfadeManager(this.elements.player, this.debugLog.bind(this));
+            }
+
+            if (window.backgroundAudioHandler) this._initBackgroundAudio();
+
+            this.debugLog('✅ Audio system initialized', 'success');
+        } catch (err) {
+            this.debugLog(`⚠️ Audio init: ${err.message}`, 'warning');
+        }
+    }
+
+    _initAudioSubManagers() {
+        const log = this.debugLog.bind(this);
+        const ap  = this.managers.audioPipeline;
+        if (!ap?.isInitialized) return;
+
+        try {
+            if (typeof AudioPresetsManager !== 'undefined') {
+                const apm = new AudioPresetsManager(ap.bassFilter, ap.midFilter, ap.trebleFilter, log);
+                this.managers.audioPresets = apm;
+                this._setWindowRef('audioPresetsManager', apm);
+                this._populateEQPresets();
+                this._setupEQPresetSelector();
+                apm.loadSavedPreset();
+                this.debugLog('✅ AudioPresetsManager initialized', 'success');
+            }
+
+            if (typeof AutoEQManager !== 'undefined' && this.managers.audioPresets) {
+                this.managers.autoEQ = new AutoEQManager(this.managers.audioPresets, log);
+                this._setWindowRef('autoEQManager', this.managers.autoEQ);
+                this.debugLog('✅ AutoEQManager initialized', 'success');
+            }
+        } catch (err) {
+            this.debugLog(`⚠️ Audio sub-manager init: ${err.message}`, 'warning');
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // EQ PRESETS
+    // ═══════════════════════════════════════════════════════════
+
+    _populateEQPresets() {
+        const dd = document.getElementById('eq-preset-select');
+        if (!dd || !this.managers.audioPresets) return;
+
+        const presets = this.managers.audioPresets.getPresetList();
+        while (dd.options.length > 1) dd.remove(1);
+        presets.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value       = p.id;
+            opt.textContent = p.name;
+            opt.title       = `${p.description}\n${p.philosophy}`;
+            dd.appendChild(opt);
+        });
+        this.debugLog(`✅ Populated ${presets.length} EQ presets`, 'info');
+    }
+
+    _setupEQPresetSelector() {
+        const dd = document.getElementById('eq-preset-select');
+        if (!dd || !this.managers.audioPresets) return;
+
+        const handler = e => {
+            const id = e.target.value;
+            if (!id || !this.managers.audioPresets) return;
+
+            const track = this.state.playlist[this.state.currentTrackIndex];
+            this.managers.audioPresets.applyPreset(id, track?.analysis ?? null);
+            this.managers.audioPresets.saveCurrentPreset();
+
+            // Disable Auto-EQ when a manual preset is chosen
+            if (this.managers.autoEQ?.isEnabled()) {
+                this.managers.autoEQ.setEnabled(false);
+                const btn = document.getElementById('auto-eq-button');
+                if (btn) {
+                    btn.classList.remove('active');
+                    const lbl = btn.querySelector('.sidebar-label');
+                    if (lbl) lbl.textContent = 'Auto-EQ Off';
+                }
+            }
+            this.debugLog(`🎛️ Applied preset: ${id}`, 'success');
+        };
+
+        dd.addEventListener('change', handler);
+        this.resources.eventListeners.push({ element: dd, event: 'change', handler });
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // VIEW MODE
+    // ═══════════════════════════════════════════════════════════
+
+    _applyViewMode(mode) {
         if (!this.elements.mainContent) return;
 
-        const compact = (mode === 'compact' || mode === 'full');
-        const full    =  mode === 'full';
+        const showPlaylistVolume = (mode === 'compact' || mode === 'full');
+        const showFull           =  mode === 'full';
 
-        this._setVisible(this.elements.sectionPlaylist, compact);
-        this._setVisible(this.elements.sectionVolume,   compact);
-        this._setVisible(this.elements.sectionLyrics,   full);
-        this._setVisible(this.elements.sectionEQ,       full);
-        this._setVisible(this.elements.dropZone,        full);
+        this._setVisible(this.elements.sectionPlaylist, showPlaylistVolume);
+        this._setVisible(this.elements.sectionVolume,   showPlaylistVolume);
+        this._setVisible(this.elements.sectionLyrics,   showFull);
+        this._setVisible(this.elements.sectionEQ,       showFull);
+        this._setVisible(this.elements.sectionDropZone, showFull);
 
         this.elements.mainContent.classList.remove('mode-full', 'mode-compact', 'mode-mini');
         this.elements.mainContent.classList.add(`mode-${mode}`);
 
-        if (this.managers.performance) {
-            this.managers.performance.setMode(mode);
-        }
+        this.managers.performance?.setMode(mode);
         this.debugLog(`View mode → ${mode}`, 'info');
     }
+
+    // Kept as public so external callers (mobile.js, tests) can use it
+    applyViewMode(mode) { this._applyViewMode(mode); }
 
     _setVisible(el, visible) {
         if (el) el.style.display = visible ? '' : 'none';
     }
 
-    // ── rAF loop ──────────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // rAF LOOP
+    // ═══════════════════════════════════════════════════════════
 
     _rafStart() {
         if (this._raf.id !== null) return;
@@ -343,16 +492,13 @@ class MusicPlayerApp {
             return;
         }
 
-        if (ts - this._raf.lastProgress >= 67) {
+        if (ts - this._raf.lastProgress >= 67) { // ~15 fps for progress bar
             this._raf.lastProgress = ts;
             this._renderProgress();
         }
 
-        if (
-            this.managers.lyrics &&
-            this.state.compactMode === 'full' &&
-            ts - this._raf.lastLyrics >= 100
-        ) {
+        if (this.managers.lyrics && this.state.compactMode === 'full' &&
+            ts - this._raf.lastLyrics >= 100) {
             this._raf.lastLyrics = ts;
             this.managers.lyrics.update(this.elements.player.currentTime, 'full');
         }
@@ -361,360 +507,47 @@ class MusicPlayerApp {
     }
 
     _renderProgress() {
-        if (!this.elements.player || !this.elements.progressBar) return;
-        
-        const dur = this.elements.player.duration;
+        const p = this.elements.player;
+        if (!p || !this.elements.progressBar) return;
+        const dur = p.duration;
         if (!isFinite(dur) || dur <= 0) return;
 
-        const ct  = this.elements.player.currentTime;
-        const pct = (ct / dur) * 100;
-
+        const pct = (p.currentTime / dur) * 100;
         if (Math.abs(pct - this._raf.lastPercent) < 0.05) return;
         this._raf.lastPercent = pct;
 
         this.elements.progressBar.style.width = `${pct}%`;
-        if (this.elements.currentTimeDisplay) {
-            this.elements.currentTimeDisplay.textContent = this.formatTime(ct);
-        }
+        if (this.elements.currentTimeDisplay)
+            this.elements.currentTimeDisplay.textContent = this.formatTime(p.currentTime);
     }
 
-    // ── Manager initialization ────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // SIDEBAR BUTTONS
+    // ═══════════════════════════════════════════════════════════
 
-    async initializeManagers() {
-        const log = this.debugLog.bind(this);
-
-        try {
-            // Core managers
-            this._initManager('worker', () => 
-                typeof createMusicPlayerWorkerManager !== 'undefined' 
-                    ? createMusicPlayerWorkerManager(log) 
-                    : null
-            );
-
-            this._initManager('ui', () => 
-                typeof UIManager !== 'undefined' 
-                    ? new UIManager(log) 
-                    : null
-            );
-
-            this._initManager('performance', () => 
-                typeof PerformanceManager !== 'undefined' 
-                    ? new PerformanceManager(log) 
-                    : null
-            );
-
-            this._initManager('imageOptimizer', () => 
-                typeof ImageOptimizer !== 'undefined' 
-                    ? new ImageOptimizer(log) 
-                    : null
-            );
-
-            // Audio buffer manager
-            if (typeof AudioBufferManager !== 'undefined') {
-                this.managers.audioBuffer = new AudioBufferManager(log);
-                this.managers.audioBuffer.setPlaylist(this.state.playlist);
-                this.managers.audioBuffer.setCallbacks({
-                    onLoadStart: (_i, name) => {
-                        if (this.elements.playlistStatus)
-                            this.elements.playlistStatus.textContent = `Loading: ${name}`;
-                    },
-                    onLoadProgress: (_i, name, loaded, total) => {
-                        if (this.elements.playlistStatus) {
-                            const pct = Math.round((loaded / total) * 100);
-                            this.elements.playlistStatus.textContent = `Loading: ${name} (${pct}%)`;
-                        }
-                    },
-                    onLoadComplete: () => {},
-                    onLoadError: (_i, name, err) => {
-                        this.debugLog(`❌ Buffer load failed: ${name} — ${err.message}`, 'error');
-                        if (this.managers.ui) {
-                            this.managers.ui.showToast(`Failed to load: ${name}`, 'error');
-                        }
-                    },
-                    onMemoryWarning: pct => {
-                        this.debugLog(`⚠️ Buffer memory at ${pct.toFixed(1)}%`, 'warning');
-                    },
-                });
-                this._setWindowRef('audioBufferManager', this.managers.audioBuffer);
-            }
-
-            // Parsing managers
-            this._initManager('metadata', () => 
-                typeof MetadataParser !== 'undefined' ? new MetadataParser(log) : null
-            );
-            this._initManager('vtt', () => 
-                typeof VTTParser !== 'undefined' ? new VTTParser(log) : null
-            );
-            this._initManager('errorRecovery', () => 
-                typeof ErrorRecovery !== 'undefined' ? new ErrorRecovery(log) : null
-            );
-            this._initManager('analysisParser', () => 
-                typeof AnalysisTextParser !== 'undefined' ? new AnalysisTextParser(log) : null
-            );
-            this._initManager('metadataEditor', () => 
-                typeof MetadataEditor !== 'undefined' ? new MetadataEditor(log) : null
-            );
-            this._initManager('analyzer', () => 
-                typeof MusicAnalyzer !== 'undefined' ? new MusicAnalyzer(log) : null
-            );
-            this._initManager('customMetadata', () => 
-                typeof CustomMetadataStore !== 'undefined' ? new CustomMetadataStore() : null
-            );
-            this._initManager('folderPersistence', () => 
-                typeof FolderPersistence !== 'undefined' ? new FolderPersistence() : null
-            );
-
-            // File loading manager
-            if (typeof EnhancedFileLoadingManager !== 'undefined') {
-                this.managers.fileLoading = new EnhancedFileLoadingManager(log);
-                this.managers.fileLoading.init({
-                    metadataParser:      this.managers.metadata,
-                    vttParser:           this.managers.vtt,
-                    analysisParser:      this.managers.analysisParser,
-                    customMetadataStore: this.managers.customMetadata,
-                    analyzer:            this.managers.analyzer,
-                    workerManager:       this.managers.worker,
-                    imageOptimizer:      this.managers.imageOptimizer,
-                });
-                this._setWindowRef('fileLoadingManager', this.managers.fileLoading);
-                this.debugLog('✅ FileLoadingManager initialized', 'success');
-            }
-
-            // Custom background
-            if (typeof CustomBackgroundManager !== 'undefined') {
-                this.managers.customBackground = new CustomBackgroundManager(log);
-                this._setWindowRef('customBackground', this.managers.customBackground);
-                this.debugLog('✅ CustomBackgroundManager initialized', 'success');
-            }
-
-            // Playlist renderer
-            if (typeof EnhancedPlaylistRenderer !== 'undefined') {
-                this.managers.playlistRenderer = new EnhancedPlaylistRenderer(log);
-                this.managers.playlistRenderer.init({
-                    playlistContainer: document.getElementById('playlist-container'),
-                    playlistItems:     this.elements.playlistItems,
-                    playlistSearch:    this.elements.playlistSearch,
-                    clearButton:       this.elements.clearButton,
-                    jumpToCurrentBtn:  this.elements.jumpToCurrentBtn,
-                });
-                this.managers.playlistRenderer.setCallbacks({
-                    onTrackClick: idx => this.loadTrack(idx),
-                    onEditClick:  idx => this.editTrackMetadata(idx),
-                });
-                this._setWindowRef('playlistRenderer', this.managers.playlistRenderer);
-                this.debugLog('✅ PlaylistRenderer initialized', 'success');
-            }
-
-            // Lyrics manager
-            if (typeof LyricsManager !== 'undefined') {
-                this.managers.lyrics = new LyricsManager(log);
-                this.managers.lyrics.init({
-                    lyricsDisplay:       this.elements.lyricsDisplay,
-                    exportButton:        this.elements.exportLyricsButton,
-                    fullscreenToggle:    this.elements.fullscreenLyricsToggle,
-                    fullscreenContainer: this.elements.fullscreenLyricsContainer,
-                    fullscreenContent:   this.elements.fullscreenLyricsContent,
-                    fullscreenCloseBtn:  this.elements.fullscreenLyricsCloseBtn,
-                    fullscreenPrevBtn:   this.elements.fullscreenLyricsPrevBtn,
-                    fullscreenNextBtn:   this.elements.fullscreenLyricsNextBtn,
-                }, this.elements.player);
-
-                this.managers.lyrics.onNavigationRequest = action => {
-                    if (action === 'previous') this.playPrevious();
-                    else if (action === 'next') this.playNext();
-                };
-                this.managers.lyrics.onGetTrackInfo = () => {
-                    if (this.state.currentTrackIndex === -1) return {};
-                    const t = this.state.playlist[this.state.currentTrackIndex];
-                    return {
-                        title:  t.metadata?.title  || t.fileName,
-                        artist: t.metadata?.artist || 'Unknown Artist',
-                    };
-                };
-                this._setWindowRef('lyricsManager', this.managers.lyrics);
-                this.debugLog('✅ LyricsManager initialized', 'success');
-            }
-
-            this.debugLog('✅ All managers initialized', 'success');
-        } catch (err) {
-            this.debugLog(`⚠️ Manager init warning: ${err.message}`, 'warning');
-        }
-    }
-
-    _initManager(key, factory) {
-        try {
-            const manager = factory();
-            if (manager) {
-                this.managers[key] = manager;
-                this._setWindowRef(`${key}Manager`, manager);
-            }
-        } catch (err) {
-            this.debugLog(`⚠️ ${key} init failed: ${err.message}`, 'warning');
-        }
-    }
-
-    connectManagersToPerformance() {
-        const pm = this.managers.performance;
-        if (!pm) { 
-            this.debugLog('⚠️ No performance manager', 'warning'); 
-            return; 
-        }
-
-        if (this.managers.audioBuffer)  pm.connectManager('audioBuffer',  this.managers.audioBuffer);
-        if (this.managers.lyrics)       pm.connectManager('lyrics',       this.managers.lyrics);
-        if (this.managers.audioPipeline) pm.connectManager('audioPipeline', this.managers.audioPipeline);
-        if (this.managers.ui)           pm.connectManager('ui',           this.managers.ui);
-
-        this.debugLog('✅ Managers connected to performance manager', 'success');
-    }
-
-    // ── Audio initialization ──────────────────────────────────────────────────
-
-    initializeAudio() {
-        try {
-            if (typeof AudioPipeline !== 'undefined' && this.elements.player) {
-                this.managers.audioPipeline = new AudioPipeline(this.debugLog.bind(this));
-                this.managers.audioPipeline.init(this.elements.player);
-
-                this._setWindowRef('audioPipeline',      this.managers.audioPipeline);
-                this._setWindowRef('audioContext',       this.managers.audioPipeline.audioContext);
-                this._setWindowRef('sharedAudioSource',  this.managers.audioPipeline.audioSource);
-                this._setWindowRef('sharedBassFilter',   this.managers.audioPipeline.bassFilter);
-                this._setWindowRef('sharedMidFilter',    this.managers.audioPipeline.midFilter);
-                this._setWindowRef('sharedTrebleFilter', this.managers.audioPipeline.trebleFilter);
-
-                document.dispatchEvent(new CustomEvent('audioContextReady'));
-                this.debugLog('✅ AudioPipeline initialized', 'success');
-                this.initializeAudioManagers();
-            }
-
-            if (typeof VolumeControl !== 'undefined' && this.elements.player) {
-                this.managers.volume = new VolumeControl(
-                    this.elements.player, this.debugLog.bind(this)
-                );
-                this._setWindowRef('volumeControl', this.managers.volume);
-            }
-
-            if (typeof CrossfadeManager !== 'undefined') {
-                this.managers.crossfade = new CrossfadeManager(
-                    this.elements.player, this.debugLog.bind(this)
-                );
-            }
-
-            if (window.backgroundAudioHandler) this.initializeBackgroundAudio();
-
-            this.debugLog('✅ Audio system initialized', 'success');
-        } catch (err) {
-            this.debugLog(`⚠️ Audio init: ${err.message}`, 'warning');
-        }
-    }
-
-    initializeAudioManagers() {
-        const log = this.debugLog.bind(this);
-        try {
-            if (
-                typeof AudioPresetsManager !== 'undefined' &&
-                this.managers.audioPipeline?.isInitialized
-            ) {
-                this.managers.audioPresets = new AudioPresetsManager(
-                    this.managers.audioPipeline.bassFilter,
-                    this.managers.audioPipeline.midFilter,
-                    this.managers.audioPipeline.trebleFilter,
-                    log
-                );
-                this._setWindowRef('audioPresetsManager', this.managers.audioPresets);
-
-                this.populateEQPresetDropdown();
-                this.setupEQPresetSelector();
-                this.managers.audioPresets.loadSavedPreset();
-                this.debugLog('✅ AudioPresetsManager initialized', 'success');
-            }
-
-            if (typeof AutoEQManager !== 'undefined' && this.managers.audioPresets) {
-                this.managers.autoEQ = new AutoEQManager(this.managers.audioPresets, log);
-                this._setWindowRef('autoEQManager', this.managers.autoEQ);
-                this.debugLog('✅ AutoEQManager initialized', 'success');
-            }
-        } catch (err) {
-            this.debugLog(`⚠️ Audio manager init: ${err.message}`, 'warning');
-            console.error(err);
-        }
-    }
-
-    // ── EQ preset helpers ─────────────────────────────────────────────────────
-
-    populateEQPresetDropdown() {
-        const dd = document.getElementById('eq-preset-select');
-        if (!dd || !this.managers.audioPresets) return;
-
-        const presets = this.managers.audioPresets.getPresetList();
-        while (dd.options.length > 1) dd.remove(1);
-
-        presets.forEach(p => {
-            const opt   = document.createElement('option');
-            opt.value   = p.id;
-            opt.textContent = p.name;
-            opt.title   = `${p.description}\n${p.philosophy}`;
-            dd.appendChild(opt);
-        });
-
-        this.debugLog(`✅ Populated ${presets.length} EQ presets`, 'info');
-    }
-
-    setupEQPresetSelector() {
-        const dd = document.getElementById('eq-preset-select');
-        if (!dd || !this.managers.audioPresets) return;
-
-        const handler = e => {
-            const id = e.target.value;
-            if (!id || !this.managers.audioPresets) return;
-
-            const track    = this.state.playlist[this.state.currentTrackIndex];
-            const analysis = track?.analysis ?? null;
-            this.managers.audioPresets.applyPreset(id, analysis);
-            this.managers.audioPresets.saveCurrentPreset();
-
-            if (this.managers.autoEQ?.isEnabled()) {
-                this.managers.autoEQ.setEnabled(false);
-                const btn = document.getElementById('auto-eq-button');
-                if (btn) {
-                    btn.classList.remove('active');
-                    const label = btn.querySelector('.sidebar-label');
-                    if (label) label.textContent = 'Auto-EQ Off';
-                }
-            }
-            this.debugLog(`🎛️ Applied preset: ${id}`, 'success');
-        };
-
-        dd.addEventListener('change', handler);
-        this.resources.eventListeners.push({ element: dd, event: 'change', handler });
-    }
-
-    // ── Sidebar buttons ───────────────────────────────────────────────────────
-
-    setupSidebarButtons() {
-        this.setupAutoEQButton();
-        this.setupVolumeBoostButton();
-        this.setupCrossfadeButton();
-        this.setupDebugButton();
-        this.setupCompactToggle();
-        this.setupStorageStatsButton();
-        this.setupCustomBackgroundButton();
-        this.setupClearCacheButton();
-        this.setupDeepAnalysisButton();
-        this.setupLyricsFetcherButton();
+    _setupSidebarButtons() {
+        this._setupAutoEQButton();
+        this._setupVolumeBoostButton();
+        this._setupCrossfadeButton();
+        this._setupDebugButton();
+        this._setupCompactToggle();
+        this._setupStorageStatsButton();
+        this._setupCustomBackgroundButton();
+        this._setupClearCacheButton();
+        this._setupDeepAnalysisButton();
+        this._setupLyricsFetcherButton();
         this.debugLog('✅ Sidebar buttons configured', 'success');
     }
 
-    setupAutoEQButton() {
+    _setupAutoEQButton() {
         const btn = document.getElementById('auto-eq-button');
         if (!btn || !this.managers.autoEQ) return;
 
+        const lbl = btn.querySelector('.sidebar-label');
         if (localStorage.getItem('autoEQEnabled') === 'true') {
             this.managers.autoEQ.setEnabled(true);
             btn.classList.add('active');
-            const label = btn.querySelector('.sidebar-label');
-            if (label) label.textContent = 'Auto-EQ On';
+            if (lbl) lbl.textContent = 'Auto-EQ On';
         }
         btn.disabled = false;
 
@@ -722,592 +555,450 @@ class MusicPlayerApp {
             if (!this.managers.autoEQ) return;
             const on = this.managers.autoEQ.toggle();
             btn.classList.toggle('active', on);
-            const label = btn.querySelector('.sidebar-label');
-            if (label) label.textContent = on ? 'Auto-EQ On' : 'Auto-EQ Off';
-            localStorage.setItem('autoEQEnabled', on.toString());
+            if (lbl) lbl.textContent = on ? 'Auto-EQ On' : 'Auto-EQ Off';
+            localStorage.setItem('autoEQEnabled', String(on));
 
             if (on && this.state.currentTrackIndex !== -1) {
-                const t = this.state.playlist[this.state.currentTrackIndex];
-                if (t) this.managers.autoEQ.applyAutoEQ(t);
+                this.managers.autoEQ.applyAutoEQ(this.state.playlist[this.state.currentTrackIndex]);
             } else if (!on) {
-                if (this.managers.audioPresets) {
-                    this.managers.audioPresets.reset();
-                }
+                this.managers.audioPresets?.reset();
                 const dd = document.getElementById('eq-preset-select');
                 if (dd) dd.value = 'flat';
             }
-            if (this.managers.ui) {
-                this.managers.ui.showToast(`Auto-EQ ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
-            }
+            this.managers.ui?.showToast(`Auto-EQ ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
         };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+        this._wire(btn, 'click', handler);
     }
 
-    setupVolumeBoostButton() {
+    _setupVolumeBoostButton() {
         const btn = document.getElementById('volume-boost-button');
         if (!btn || !this.managers.volume) return;
 
+        const lbl = btn.querySelector('.sidebar-label');
         if (this.managers.volume.isBoostEnabled()) {
             btn.classList.add('active');
-            const label = btn.querySelector('.sidebar-label');
-            if (label) label.textContent = 'Boost On';
+            if (lbl) lbl.textContent = 'Boost On';
         }
 
         const handler = () => {
-            if (!this.managers.volume) return;
             const on = !this.managers.volume.isBoostEnabled();
             this.managers.volume.setBoost(on, 1.5);
             btn.classList.toggle('active', on);
-            const label = btn.querySelector('.sidebar-label');
-            if (label) label.textContent = on ? 'Boost On' : 'Boost Off';
-            if (this.managers.ui) {
-                this.managers.ui.showToast(`Volume Boost ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
-            }
+            if (lbl) lbl.textContent = on ? 'Boost On' : 'Boost Off';
+            this.managers.ui?.showToast(`Volume Boost ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
         };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+        this._wire(btn, 'click', handler);
     }
 
-    setupCrossfadeButton() {
+    _setupCrossfadeButton() {
         const btn = document.getElementById('crossfade-button');
         if (!btn || !this.managers.crossfade) return;
 
+        const lbl = btn.querySelector('.sidebar-label');
         if (localStorage.getItem('crossfadeEnabled') === 'true') {
             this.managers.crossfade.setEnabled(true);
             btn.classList.add('active');
-            const label = btn.querySelector('.sidebar-label');
-            if (label) label.textContent = 'Crossfade On';
+            if (lbl) lbl.textContent = 'Crossfade On';
         }
         btn.disabled = false;
 
         const handler = () => {
-            if (!this.managers.crossfade) return;
             const on = !this.managers.crossfade.enabled;
             this.managers.crossfade.setEnabled(on);
             btn.classList.toggle('active', on);
-            const label = btn.querySelector('.sidebar-label');
-            if (label) label.textContent = on ? 'Crossfade On' : 'Crossfade Off';
-            localStorage.setItem('crossfadeEnabled', on.toString());
-            if (this.managers.ui) {
-                this.managers.ui.showToast(`Crossfade ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
-            }
+            if (lbl) lbl.textContent = on ? 'Crossfade On' : 'Crossfade Off';
+            localStorage.setItem('crossfadeEnabled', String(on));
+            this.managers.ui?.showToast(`Crossfade ${on ? 'enabled' : 'disabled'}`, on ? 'success' : 'info');
         };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+        this._wire(btn, 'click', handler);
     }
 
-    setupDebugButton() {
+    _setupDebugButton() {
         const btn = document.getElementById('debug-toggle');
         if (!btn) return;
-
         const handler = () => {
             this.state.debugMode = !this.state.debugMode;
             btn.classList.toggle('active', this.state.debugMode);
-            if (this.elements.debugPanel) {
-                this.elements.debugPanel.classList.toggle('visible', this.state.debugMode);
-            }
+            this.elements.debugPanel?.classList.toggle('visible', this.state.debugMode);
             this.debugLog(`Debug mode: ${this.state.debugMode ? 'ON' : 'OFF'}`, 'info');
         };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+        this._wire(btn, 'click', handler);
     }
 
-    setupCompactToggle() {
+    _setupCompactToggle() {
         const btn = document.getElementById('compact-toggle');
         if (!btn) return;
 
-        const saved = localStorage.getItem('compactMode') || 'full';
-        this.state.compactMode = saved;
-        this.applyViewMode(saved);
-
+        const MODES = ['full', 'compact', 'mini'];
         const NAMES = { full: 'Full View', compact: 'Compact', mini: 'Mini' };
+        const saved = localStorage.getItem('compactMode') || 'full';
+
+        this.state.compactMode = saved;
+        this._applyViewMode(saved);
 
         const handler = () => {
-            const modes = ['full', 'compact', 'mini'];
-            const next  = modes[(modes.indexOf(this.state.compactMode) + 1) % modes.length];
+            const next = MODES[(MODES.indexOf(this.state.compactMode) + 1) % MODES.length];
             this.state.compactMode = next;
-            this.applyViewMode(next);
+            this._applyViewMode(next);
             localStorage.setItem('compactMode', next);
-            const label = btn.querySelector('.sidebar-label');
-            if (label) label.textContent = NAMES[next];
-            if (this.managers.ui) {
-                this.managers.ui.showToast(`View: ${NAMES[next]}`, 'info');
-            }
+            const lbl = btn.querySelector('.sidebar-label');
+            if (lbl) lbl.textContent = NAMES[next];
+            this.managers.ui?.showToast(`View: ${NAMES[next]}`, 'info');
         };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+        this._wire(btn, 'click', handler);
     }
 
-    setupStorageStatsButton() {
+    _setupStorageStatsButton() {
         const btn = document.getElementById('storage-stats-btn');
         if (!btn) return;
-
         const handler = async () => {
             try {
                 let msg = '💾 Storage Information\n\n';
-
                 if (navigator.storage?.estimate) {
-                    const e   = await navigator.storage.estimate();
+                    const e = await navigator.storage.estimate();
                     const usedMB  = (e.usage  / 1048576).toFixed(2);
                     const totalMB = (e.quota  / 1048576).toFixed(2);
                     const pct     = ((e.usage / e.quota) * 100).toFixed(1);
-                    msg += `Used: ${usedMB} MB\nTotal: ${totalMB} MB\nUsage: ${pct}%\n\n`;
+                    msg += `Used: ${usedMB} MB / ${totalMB} MB (${pct}%)\n\n`;
                 }
-
                 if (this.managers.audioBuffer) {
                     const s = this.managers.audioBuffer.getStats();
                     msg += `Audio Buffer:\n- Memory: ${s.memoryUsedMB}\n- Cached: ${s.cachedTracks} tracks\n- Hit rate: ${s.hitRate}\n\n`;
                 }
-
                 if (this.managers.performance) {
                     const p = this.managers.performance.getStatsDisplay();
-                    msg += `Performance:\n- FPS: ${p.fps}\n- Memory: ${p.memory}\n- CPU: ${p.cpuLoad}\n`;
+                    msg += `Performance:\n- FPS: ${p.fps}  Memory: ${p.memory}  CPU: ${p.cpuLoad}\n`;
                     msg += `- Active: ${p.activeResources.intervals} intervals, ${p.activeResources.animations} animations\n\n`;
                 }
-
                 msg += `Blob URLs: ${this.resources.blobURLs.size}\n`;
-                msg += `Event Listeners: ${this.resources.eventListeners.length}`;
+                msg += `Event listeners: ${this.resources.eventListeners.length}`;
                 alert(msg);
             } catch (err) {
                 this.debugLog(`Storage stats error: ${err.message}`, 'error');
                 alert('Storage information not available');
             }
         };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+        this._wire(btn, 'click', handler);
     }
 
-    setupCustomBackgroundButton() {
+    _setupCustomBackgroundButton() {
         const btn = document.getElementById('custom-bg-button');
         if (!btn) return;
-
         const handler = () => {
-            if (this.managers.customBackground) {
-                this.managers.customBackground.showModal();
-            } else if (this.managers.ui) {
-                this.managers.ui.showToast('Background picker not available', 'error');
-            }
+            if (this.managers.customBackground) this.managers.customBackground.showModal();
+            else this.managers.ui?.showToast('Background picker not available', 'error');
         };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+        this._wire(btn, 'click', handler);
     }
 
-    setupClearCacheButton() {
+    _setupClearCacheButton() {
         const btn = document.getElementById('clear-cache-btn');
         if (!btn) return;
-
         const handler = async () => {
-            if (!confirm('Clear all cached data? This will not delete your playlist.')) return;
+            if (!confirm('Clear all cached data? Your playlist will not be affected.')) return;
             try {
-                this.revokeBlobURLs();
-                if (this.managers.audioBuffer) {
-                    this.managers.audioBuffer.clearAllBuffers();
-                }
+                this._revokeBlobURLs();
+                this.managers.audioBuffer?.clearAllBuffers();
                 this.colorCache.clear();
                 if ('caches' in window) {
                     const names = await caches.keys();
                     await Promise.all(names.map(n => caches.delete(n)));
                 }
-                if (this.managers.ui) {
-                    this.managers.ui.showToast('Cache cleared successfully', 'success');
-                }
+                this.managers.ui?.showToast('Cache cleared', 'success');
                 this.debugLog('✅ Cache cleared', 'success');
             } catch (err) {
                 this.debugLog(`Cache clear error: ${err.message}`, 'error');
-                if (this.managers.ui) {
-                    this.managers.ui.showToast('Error clearing cache', 'error');
-                }
+                this.managers.ui?.showToast('Error clearing cache', 'error');
             }
         };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+        this._wire(btn, 'click', handler);
     }
 
-    setupDeepAnalysisButton() {
+    _setupDeepAnalysisButton() {
         const btn = document.getElementById('deep-analysis-btn');
         if (!btn) return;
-        
-        const handler = () => {
-            window.open('deep-music-analysis.html', '_blank', 'width=1200,height=800');
-        };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+        this._wire(btn, 'click', () =>
+            window.open('deep-music-analysis.html', '_blank', 'width=1200,height=800')
+        );
     }
 
-    setupLyricsFetcherButton() {
+    _setupLyricsFetcherButton() {
         const btn = document.getElementById('auto-lyrics-btn');
         if (!btn) return;
-        
-        const handler = () => {
-            window.open('lyrics-fetcher.html', '_blank', 'width=1000,height=700');
-        };
-        btn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: btn, event: 'click', handler });
+        this._wire(btn, 'click', () =>
+            window.open('lyrics-fetcher.html', '_blank', 'width=1000,height=700')
+        );
     }
 
-    setupFullscreenLyricsToggle() {
-        const toggleBtn = document.getElementById('fullscreen-lyrics-toggle');
-        const fullscreenContainer = document.getElementById('fullscreen-lyrics');
-        
-        if (!toggleBtn || !fullscreenContainer || !this.managers.lyrics) return;
-        
-        const handler = () => {
-            const isHidden = fullscreenContainer.classList.contains('fullscreen-lyrics-hidden');
-            
-            if (isHidden) {
-                fullscreenContainer.classList.remove('fullscreen-lyrics-hidden');
-                fullscreenContainer.classList.add('show');
-                
-                const mainLyricsHidden = this.state.compactMode !== 'full';
-                if (mainLyricsHidden && this.managers.lyrics) {
-                    this.managers.lyrics._wasAutoSyncDisabled = !this.managers.lyrics.autoSync;
-                    if (this.managers.lyrics.enableAutoSync) {
-                        this.managers.lyrics.enableAutoSync();
-                    }
-                }
-            } else {
-                fullscreenContainer.classList.add('fullscreen-lyrics-hidden');
-                fullscreenContainer.classList.remove('show');
-                
-                const mainLyricsHidden = this.state.compactMode !== 'full';
-                if (mainLyricsHidden && this.managers.lyrics?._wasAutoSyncDisabled) {
-                    if (this.managers.lyrics.disableAutoSync) {
-                        this.managers.lyrics.disableAutoSync();
-                    }
-                    delete this.managers.lyrics._wasAutoSyncDisabled;
-                }
+    // ═══════════════════════════════════════════════════════════
+    // FULLSCREEN LYRICS TOGGLE
+    // ═══════════════════════════════════════════════════════════
+
+    _setupFullscreenLyricsToggle() {
+        const toggle = this.elements.fsLyricsToggle;
+        const panel  = this.elements.fsLyricsContainer;
+        if (!toggle || !panel || !this.managers.lyrics) return;
+
+        const openPanel = () => {
+            panel.classList.remove('fullscreen-lyrics-hidden');
+            panel.classList.add('show');
+            if (this.state.compactMode !== 'full') {
+                this.managers.lyrics._wasAutoSyncDisabled = !this.managers.lyrics.autoSync;
+                this.managers.lyrics.enableAutoSync?.();
             }
         };
-        
-        toggleBtn.addEventListener('click', handler);
-        this.resources.eventListeners.push({ element: toggleBtn, event: 'click', handler });
-        
-        const closeBtn = document.getElementById('lyrics-close-btn');
-        if (closeBtn) {
-            const closeHandler = () => {
-                fullscreenContainer.classList.add('fullscreen-lyrics-hidden');
-                fullscreenContainer.classList.remove('show');
-                
-                const mainLyricsHidden = this.state.compactMode !== 'full';
-                if (mainLyricsHidden && this.managers.lyrics?._wasAutoSyncDisabled) {
-                    if (this.managers.lyrics.disableAutoSync) {
-                        this.managers.lyrics.disableAutoSync();
-                    }
-                    delete this.managers.lyrics._wasAutoSyncDisabled;
-                }
-            };
-            closeBtn.addEventListener('click', closeHandler);
-            this.resources.eventListeners.push({ element: closeBtn, event: 'click', handler: closeHandler });
-        }
+
+        const closePanel = () => {
+            panel.classList.add('fullscreen-lyrics-hidden');
+            panel.classList.remove('show');
+            if (this.state.compactMode !== 'full' && this.managers.lyrics._wasAutoSyncDisabled) {
+                this.managers.lyrics.disableAutoSync?.();
+                delete this.managers.lyrics._wasAutoSyncDisabled;
+            }
+        };
+
+        const togglePanel = () => {
+            panel.classList.contains('fullscreen-lyrics-hidden') ? openPanel() : closePanel();
+        };
+
+        this._wire(toggle, 'click', togglePanel);
+        if (this.elements.fsLyricsClose) this._wire(this.elements.fsLyricsClose, 'click', closePanel);
     }
 
-    // ── Keyboard shortcuts ────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // KEYBOARD SHORTCUTS
+    // ═══════════════════════════════════════════════════════════
 
-    setupKeyboardShortcuts() {
+    _setupKeyboardShortcuts() {
         const handler = e => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
             switch (e.key.toLowerCase()) {
-                case ' ':
-                    e.preventDefault(); this.togglePlayPause(); break;
-
-                case 'arrowright':
-                    e.preventDefault();
-                    if (e.shiftKey) {
-                        this.seekForward();
-                    } else {
-                        this.playNext();
-                    }
-                    break;
-
-                case 'arrowleft':
-                    e.preventDefault();
-                    if (e.shiftKey) {
-                        this.seekBackward();
-                    } else {
-                        this.playPrevious();
-                    }
-                    break;
-
-                case 'arrowup':
-                    e.preventDefault(); 
-                    if (this.managers.volume) {
-                        this.managers.volume.increaseVolume(0.1);
-                    }
-                    break;
-
-                case 'arrowdown':
-                    e.preventDefault(); 
-                    if (this.managers.volume) {
-                        this.managers.volume.decreaseVolume(0.1);
-                    }
-                    break;
-
-                case 'm': 
-                    e.preventDefault(); 
-                    if (this.managers.volume) {
-                        this.managers.volume.toggleMute();
-                    }
-                    break;
-                    
-                case 's': e.preventDefault(); this.toggleShuffle(); break;
-                case 'l': e.preventDefault(); this.cycleLoopMode(); break;
-
-                case 'f':
-                    if (this.managers.lyrics) {
-                        e.preventDefault(); this.managers.lyrics.toggleFullscreen();
-                    }
-                    break;
-
-                case 'd':
-                    e.preventDefault();
-                    this.state.debugMode = !this.state.debugMode;
-                    const debugToggle = document.getElementById('debug-toggle');
-                    if (debugToggle) {
-                        debugToggle.classList.toggle('active', this.state.debugMode);
-                    }
-                    if (this.elements.debugPanel) {
-                        this.elements.debugPanel.classList.toggle('visible', this.state.debugMode);
-                    }
-                    break;
-
+                case ' ':           e.preventDefault(); this.togglePlayPause(); break;
+                case 'arrowright':  e.preventDefault(); e.shiftKey ? this._seekForward()   : this.playNext();     break;
+                case 'arrowleft':   e.preventDefault(); e.shiftKey ? this._seekBackward()  : this.playPrevious(); break;
+                case 'arrowup':     e.preventDefault(); this.managers.volume?.increaseVolume(0.1); break;
+                case 'arrowdown':   e.preventDefault(); this.managers.volume?.decreaseVolume(0.1); break;
+                case 'm':           e.preventDefault(); this.managers.volume?.toggleMute(); break;
+                case 's':           e.preventDefault(); this.toggleShuffle(); break;
+                case 'l':           e.preventDefault(); this.cycleLoopMode(); break;
+                case 'f':           if (this.managers.lyrics) { e.preventDefault(); this.managers.lyrics.toggleFullscreen(); } break;
+                case 'd':           e.preventDefault(); this._toggleDebug(); break;
                 case 'c': {
                     e.preventDefault();
-                    const modes = ['full', 'compact', 'mini'];
-                    const next  = modes[(modes.indexOf(this.state.compactMode) + 1) % modes.length];
+                    const MODES = ['full', 'compact', 'mini'];
+                    const next  = MODES[(MODES.indexOf(this.state.compactMode) + 1) % MODES.length];
                     this.state.compactMode = next;
-                    this.applyViewMode(next);
+                    this._applyViewMode(next);
                     localStorage.setItem('compactMode', next);
                     break;
                 }
             }
         };
 
-        document.addEventListener('keydown', handler);
-        this.resources.eventListeners.push({ element: document, event: 'keydown', handler });
+        this._wire(document, 'keydown', handler);
         this.debugLog('✅ Keyboard shortcuts enabled', 'success');
     }
 
-    // ── Playback helpers ──────────────────────────────────────────────────────
-
-    togglePlayPause() {
-        if (!this.elements.player) return;
-        if (this.elements.player.paused) {
-            this.elements.player.play()
-                .catch(e => this.debugLog(`Play failed: ${e.message}`, 'error'));
-        } else {
-            this.elements.player.pause();
-        }
+    _toggleDebug() {
+        this.state.debugMode = !this.state.debugMode;
+        document.getElementById('debug-toggle')?.classList.toggle('active', this.state.debugMode);
+        this.elements.debugPanel?.classList.toggle('visible', this.state.debugMode);
     }
 
-    seekForward() {
-        if (!this.elements.player) return;
-        this.elements.player.currentTime = Math.min(
-            this.elements.player.currentTime + 5,
-            this.elements.player.duration || 0
-        );
-    }
+    // ═══════════════════════════════════════════════════════════
+    // EVENT LISTENERS
+    // ═══════════════════════════════════════════════════════════
 
-    seekBackward() {
-        if (!this.elements.player) return;
-        this.elements.player.currentTime = Math.max(
-            this.elements.player.currentTime - 5, 0
-        );
-    }
+    _setupEventListeners() {
+        const p = this.elements.player;
 
-    async initializeBackgroundAudio() {
-        try {
-            const ok = await backgroundAudioHandler.init({
-                player:               this.elements.player,
-                playlist:             () => this.state.playlist,
-                getCurrentTrackIndex: () => this.state.currentTrackIndex,
-                onMediaAction: {
-                    previous: () => this.playPrevious(),
-                    next:     () => this.playNext(),
-                },
-            });
-            if (ok) this.debugLog('✅ Background audio activated', 'success');
-        } catch (err) {
-            this.debugLog(`⚠️ Background audio: ${err.message}`, 'warning');
-        }
-    }
-
-    // ── Event listeners ───────────────────────────────────────────────────────
-
-    setupEventListeners() {
-        const wire = (el, event, handler, opts) => {
-            if (!el) return;
-            el.addEventListener(event, handler, opts);
-            this.resources.eventListeners.push({ element: el, event, handler });
-        };
-
-        wire(this.elements.player, 'ended',          () => this.handleTrackEnded());
-        wire(this.elements.player, 'loadedmetadata', () => this.handleMetadataLoaded());
-        wire(this.elements.player, 'error',          e  => this.handlePlayerError(e));
-        wire(this.elements.player, 'play',           () => this.handlePlay());
-        wire(this.elements.player, 'pause',          () => this.handlePause());
-
-        wire(this.elements.player, 'seeked', () => {
-            if (this.elements.player.paused) {
+        this._wire(p, 'ended',          () => this._handleTrackEnded());
+        this._wire(p, 'loadedmetadata', () => this._handleMetadataLoaded());
+        this._wire(p, 'error',          e  => this._handlePlayerError(e));
+        this._wire(p, 'play',           () => this._handlePlay());
+        this._wire(p, 'pause',          () => this._handlePause());
+        this._wire(p, 'seeked',         () => {
+            if (p.paused) {
                 this._renderProgress();
-                if (this.managers.lyrics && this.state.compactMode === 'full') {
-                    this.managers.lyrics.update(this.elements.player.currentTime, 'full');
-                }
+                if (this.managers.lyrics && this.state.compactMode === 'full')
+                    this.managers.lyrics.update(p.currentTime, 'full');
             }
         });
 
-        wire(this.elements.loadButton,     'click', () => this.loadFiles());
-        wire(this.elements.folderButton,   'click', () => this.loadFromFolder());
-        wire(this.elements.prevButton,     'click', () => this.playPrevious());
-        wire(this.elements.nextButton,     'click', () => this.playNext());
-        wire(this.elements.playPauseButton,'click', () => this.togglePlayPause());
-        wire(this.elements.shuffleButton,  'click', () => this.toggleShuffle());
-        wire(this.elements.loopButton,     'click', () => this.cycleLoopMode());
-        wire(this.elements.clearButton,    'click', () => this.clearPlaylist());
+        this._wire(this.elements.loadButton,      'click', () => this.loadFiles());
+        this._wire(this.elements.folderButton,    'click', () => this.loadFromFolder());
+        this._wire(this.elements.prevButton,      'click', () => this.playPrevious());
+        this._wire(this.elements.nextButton,      'click', () => this.playNext());
+        this._wire(this.elements.playPauseButton, 'click', () => this.togglePlayPause());
+        this._wire(this.elements.shuffleButton,   'click', () => this.toggleShuffle());
+        this._wire(this.elements.loopButton,      'click', () => this.cycleLoopMode());
+        this._wire(this.elements.clearButton,     'click', () => this.clearPlaylist());
 
-        wire(document, 'visibilitychange', () => {
-            if (document.hidden) {
-                this._rafStop();
-            } else if (this.elements.player && !this.elements.player.paused) {
-                this._rafStart();
-            }
+        // Pause rAF when tab is hidden, resume when visible again
+        this._wire(document, 'visibilitychange', () => {
+            if (document.hidden) this._rafStop();
+            else if (p && !p.paused) this._rafStart();
         });
 
-        if (this.elements.progressContainer) this.setupProgressBar();
-        this.setupEqualizer();
+        if (this.elements.progressContainer) this._setupProgressBar();
+        this._setupEqualizer();
+
+        // Hide folder button on unsupported browsers
+        if (this.elements.folderButton && !('showDirectoryPicker' in window)) {
+            this.elements.folderButton.style.display = 'none';
+        }
 
         this.debugLog('✅ Event listeners registered', 'success');
     }
 
-    setupProgressBar() {
-        if (!this.elements.progressContainer) return;
-        
-        let seekDebounce = null;
+    // ─── Progress bar ─────────────────────────────────────────────────────────
 
-        const mousedownHandler = () => {
-            if (seekDebounce !== null) {
-                clearTimeout(seekDebounce);
-                this.resources.timeouts.delete(seekDebounce);
-                seekDebounce = null;
-            }
+    _setupProgressBar() {
+        const container = this.elements.progressContainer;
+        const player    = this.elements.player;
+        if (!container || !player) return;
 
-            this.state.isSeekingProg = true;
-            const wasPlaying = this.elements.player && !this.elements.player.paused;
-            if (this.elements.player) {
-                this.elements.player.pause();
-            }
+        let wasPlaying    = false;
+        let resumeTimeout = null;
 
-            seekDebounce = setTimeout(() => {
-                this.resources.timeouts.delete(seekDebounce);
-                seekDebounce = null;
-                if (wasPlaying && this.elements.player) {
-                    this.elements.player.play()
-                        .catch(e => this.debugLog(`Resume error: ${e.message}`, 'error'));
+        const scheduleResume = () => {
+            clearTimeout(resumeTimeout);
+            resumeTimeout = setTimeout(() => {
+                resumeTimeout = null;
+                if (wasPlaying && !this.state.isSeekingProg) {
+                    player.play().catch(e => this.debugLog(`Resume error: ${e.message}`, 'error'));
                 }
-            }, this.config.SEEK_DEBOUNCE_DELAY_MS);
-
-            this.resources.timeouts.add(seekDebounce);
+            }, this.config.SEEK_RESUME_DELAY_MS);
         };
 
-        const mousemoveHandler = e => {
-            if (!this.state.isSeekingProg) return;
-            this._scrubProgress(e);
+        const onMouseDown = () => {
+            this.state.isSeekingProg = true;
+            clearTimeout(resumeTimeout);
+            wasPlaying = !player.paused;
+            if (wasPlaying) player.pause();
         };
 
-        const mouseupHandler = e => {
+        const onMouseMove = e => {
+            if (this.state.isSeekingProg) this._scrubProgress(e);
+        };
+
+        const onMouseUp = e => {
             if (!this.state.isSeekingProg) return;
-            this.state.isSeekingProg = false;
             const newTime = this._scrubProgress(e);
-            if (newTime !== null && isFinite(newTime) && this.elements.player) {
-                try { this.elements.player.currentTime = newTime; }
-                catch (err) { this.debugLog(`Seek failed: ${err.message}`, 'error'); }
+            if (newTime !== null && isFinite(newTime)) {
+                try { player.currentTime = newTime; } catch (_) {}
             }
+            this.state.isSeekingProg = false;
+            scheduleResume();
         };
 
-        this.elements.progressContainer.addEventListener('mousedown', mousedownHandler);
-        document.addEventListener('mousemove', mousemoveHandler, { passive: true });
-        document.addEventListener('mouseup',   mouseupHandler,   { passive: true });
+        container.addEventListener('mousedown', onMouseDown);
+        document.addEventListener('mousemove', onMouseMove, { passive: true });
+        document.addEventListener('mouseup',   onMouseUp,   { passive: true });
 
         this.resources.eventListeners.push(
-            { element: this.elements.progressContainer, event: 'mousedown', handler: mousedownHandler },
-            { element: document, event: 'mousemove', handler: mousemoveHandler },
-            { element: document, event: 'mouseup',   handler: mouseupHandler  }
+            { element: container, event: 'mousedown', handler: onMouseDown },
+            { element: document,  event: 'mousemove', handler: onMouseMove },
+            { element: document,  event: 'mouseup',   handler: onMouseUp  }
         );
     }
 
     _scrubProgress(e) {
-        if (!this.elements.progressContainer || !this.elements.player) return null;
-        
-        const rect    = this.elements.progressContainer.getBoundingClientRect();
-        const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        const newTime = percent * this.elements.player.duration;
+        const container = this.elements.progressContainer;
+        const player    = this.elements.player;
+        if (!container || !player) return null;
 
-        if (this.elements.progressBar) {
-            this.elements.progressBar.style.width = `${percent * 100}%`;
-        }
-        if (this.elements.currentTimeDisplay) {
+        const rect    = container.getBoundingClientRect();
+        const pct     = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const newTime = pct * player.duration;
+
+        if (this.elements.progressBar)
+            this.elements.progressBar.style.width = `${pct * 100}%`;
+        if (this.elements.currentTimeDisplay)
             this.elements.currentTimeDisplay.textContent = this.formatTime(newTime);
-        }
-        this._raf.lastPercent = percent * 100;
 
+        this._raf.lastPercent = pct * 100;
         return newTime;
     }
 
-    setupEqualizer() {
-        const sliders = [
-            { slider: this.elements.eqBassSlider,   display: this.elements.bassValue,   type: 'bass'   },
-            { slider: this.elements.eqMidSlider,    display: this.elements.midValue,    type: 'mid'    },
-            { slider: this.elements.eqTrebleSlider, display: this.elements.trebleValue, type: 'treble' },
-        ];
+    // ─── Equalizer ────────────────────────────────────────────────────────────
 
-        sliders.forEach(({ slider, display, type }) => {
+    _setupEqualizer() {
+        [
+            { slider: this.elements.eqBass,   display: this.elements.bassValue,   type: 'bass'   },
+            { slider: this.elements.eqMid,    display: this.elements.midValue,    type: 'mid'    },
+            { slider: this.elements.eqTreble, display: this.elements.trebleValue, type: 'treble' },
+        ].forEach(({ slider, display, type }) => {
             if (!slider) return;
             const handler = e => {
                 const v = parseFloat(e.target.value);
                 if (display) display.textContent = `${v > 0 ? '+' : ''}${v} dB`;
-                this.updateEqualizer(type, v);
+                this._updateEQ(type, v);
             };
-            slider.addEventListener('input', handler);
-            this.resources.eventListeners.push({ element: slider, event: 'input', handler });
+            this._wire(slider, 'input', handler);
         });
 
-        if (this.elements.eqResetBtn) {
-            const handler = () => this.resetEqualizer();
-            this.elements.eqResetBtn.addEventListener('click', handler);
-            this.resources.eventListeners.push({ element: this.elements.eqResetBtn, event: 'click', handler });
+        if (this.elements.eqResetBtn)
+            this._wire(this.elements.eqResetBtn, 'click', () => this._resetEQ());
+    }
+
+    _updateEQ(type, value) {
+        const ap = this.managers.audioPipeline;
+        if (!ap?.isInitialized) return;
+        const filter = { bass: ap.bassFilter, mid: ap.midFilter, treble: ap.trebleFilter }[type];
+        if (filter) ap.setGain(filter, value);
+    }
+
+    _resetEQ() {
+        [
+            [this.elements.eqBass,   this.elements.bassValue  ],
+            [this.elements.eqMid,    this.elements.midValue   ],
+            [this.elements.eqTreble, this.elements.trebleValue],
+        ].forEach(([sl, disp]) => {
+            if (!sl) return;
+            sl.value = 0;
+            if (disp) disp.textContent = '0 dB';
+        });
+
+        const ap = this.managers.audioPipeline;
+        if (ap?.bassFilter) {
+            ap.setGain(ap.bassFilter,   0);
+            ap.setGain(ap.midFilter,    0);
+            ap.setGain(ap.trebleFilter, 0);
         }
     }
 
-    // ── File loading ──────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // FILE / FOLDER LOADING
+    // ═══════════════════════════════════════════════════════════
 
     async loadFiles() {
+        if (!this.managers.fileLoading) {
+            this.managers.ui?.showToast('File loading not available', 'error');
+            return;
+        }
         try {
-            if (!this.managers.fileLoading) {
-                if (this.managers.ui) {
-                    this.managers.ui.showToast('File loading not available', 'error');
-                }
-                return;
-            }
             const result = await this.managers.fileLoading.createFileInput();
-            if (result?.success && result.playlist.length > 0) {
-                this._applyNewPlaylist(result.playlist);
-            }
+            if (result?.success && result.playlist.length > 0) this._applyNewPlaylist(result.playlist);
         } catch (err) {
-            if (err.name !== 'AbortError') this.debugLog(`Error loading: ${err.message}`, 'error');
+            if (err.name !== 'AbortError') this.debugLog(`Error loading files: ${err.message}`, 'error');
         }
     }
 
-    async loadFromFolder() {
+    async loadFromFolder(existingHandle = null) {
         try {
-            if (!('showDirectoryPicker' in window)) {
-                if (this.managers.ui) {
-                    this.managers.ui.showToast('Folder selection not supported', 'error');
+            let dir = existingHandle;
+            if (!dir) {
+                if (!('showDirectoryPicker' in window)) {
+                    this.managers.ui?.showToast('Folder selection not supported in this browser', 'error');
+                    return;
                 }
-                return;
+                dir = await window.showDirectoryPicker({ mode: 'read', startIn: 'music' });
             }
-            const dir = await window.showDirectoryPicker({ mode: 'read', startIn: 'music' });
+
             this.state.folderHandle = dir;
+
             if (!this.managers.fileLoading) return;
 
             const result = await this.managers.fileLoading.loadFromFolderHandle(dir);
@@ -1324,34 +1015,32 @@ class MusicPlayerApp {
                 }
             }
         } catch (err) {
-            if (err.name !== 'AbortError') this.debugLog(`Error: ${err.message}`, 'error');
+            if (err.name !== 'AbortError') this.debugLog(`Error loading folder: ${err.message}`, 'error');
         }
     }
 
     _applyNewPlaylist(playlist) {
         this.state.playlist          = playlist;
         this.state.currentTrackIndex = -1;
-        if (this.managers.audioBuffer) {
-            this.managers.audioBuffer.setPlaylist(this.state.playlist);
-        }
-        this.updatePlaylist();
-        this.savePlaylistToStorage();
-        if (this.managers.ui) {
-            this.managers.ui.showToast(`Loaded ${playlist.length} tracks`, 'success');
-        }
-        this.startBackgroundAnalysis();
+        this.state.shuffledPlaylist  = [];
+
+        this.managers.audioBuffer?.setPlaylist(playlist);
+        this._updatePlaylist();
+        this._savePlaylistToStorage();
+        this.managers.ui?.showToast(`Loaded ${playlist.length} track${playlist.length !== 1 ? 's' : ''}`, 'success');
+        this._startBackgroundAnalysis();
         this.loadTrack(0);
     }
 
-    // ── Track loading ─────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // TRACK LOADING
+    // ═══════════════════════════════════════════════════════════
 
     async loadTrack(index) {
         if (index < 0 || index >= this.state.playlist.length) return;
 
-        this.cleanupCurrentTrack();
-        if (this.managers.performance) {
-            this.managers.performance.cleanupForTrackChange();
-        }
+        this._cleanupCurrentTrack();
+        this.managers.performance?.cleanupForTrackChange();
 
         this.state.currentTrackIndex = index;
         const track = this.state.playlist[index];
@@ -1359,19 +1048,16 @@ class MusicPlayerApp {
         this.debugLog(`Loading track ${index + 1}: ${track.fileName}`, 'info');
 
         if (track.metadata) {
-            this.displayMetadata(track.metadata);
+            this._displayMetadata(track.metadata);
         } else {
-            this.clearMetadata();
-            if (this.elements.trackTitle) {
-                this.elements.trackTitle.textContent = track.fileName;
-            }
+            this._clearMetadata();
+            if (this.elements.trackTitle) this.elements.trackTitle.textContent = track.fileName;
         }
 
         // Per-track volume memory
         if (this.managers.volume && track.metadata) {
-            const id      = `${track.metadata.artist || 'Unknown'}_${track.metadata.title || track.fileName}`;
-            const applied = this.managers.volume.applyTrackVolume(id);
-            if (!applied && track.analysis) {
+            const id = `${track.metadata.artist || 'Unknown'}_${track.metadata.title || track.fileName}`;
+            if (!this.managers.volume.applyTrackVolume(id) && track.analysis) {
                 this.managers.volume.applyVolume(this.managers.volume.getVolume(), true, track.analysis);
             }
         }
@@ -1380,27 +1066,20 @@ class MusicPlayerApp {
             this.managers.autoEQ.applyAutoEQ(track);
         }
 
-        // Audio source: buffered → direct URL fallback
+        // Audio source — prefer pre-buffered; fall back to direct URL
+        const capturedIdx = index;
+
         if (this.managers.audioBuffer && track.file) {
-            const capturedIndex = index;
-
-            this.managers.audioBuffer.getBuffer(capturedIndex).then(buffer => {
-                if (this.state.currentTrackIndex !== capturedIndex || !this.elements.player) return;
-
-                const url = URL.createObjectURL(new Blob([buffer], { type: 'audio/mpeg' }));
-                this.resources.blobURLs.add(url);
-                this.elements.player.src = url;
-                this.elements.player.load();
-
-                if (track.analysis?.silence?.start > 0.1) {
-                    this.elements.player.currentTime = track.analysis.silence.start;
-                }
-
-                this.elements.player.play()
-                    .catch(e => this.debugLog(`Playback failed: ${e.message}`, 'warning'));
-
-                this.managers.audioBuffer.preloadUpcoming(capturedIndex);
-            }).catch(() => this._playFromURL(track));
+            this.managers.audioBuffer.getBuffer(capturedIdx)
+                .then(buffer => {
+                    if (this.state.currentTrackIndex !== capturedIdx || !this.elements.player) return;
+                    const mime = track.file.type || 'audio/mpeg';
+                    const url  = URL.createObjectURL(new Blob([buffer], { type: mime }));
+                    this.resources.blobURLs.add(url);
+                    this._setPlayerSrc(url, track);
+                    this.managers.audioBuffer.preloadUpcoming(capturedIdx);
+                })
+                .catch(() => this._playFromURL(track));
         } else {
             this._playFromURL(track);
         }
@@ -1413,200 +1092,265 @@ class MusicPlayerApp {
             } catch {
                 this.managers.lyrics.clearLyrics();
             }
-        } else if (this.managers.lyrics) {
-            this.managers.lyrics.clearLyrics();
+        } else {
+            this.managers.lyrics?.clearLyrics();
         }
 
-        if (this.managers.playlistRenderer) {
-            this.managers.playlistRenderer.updateHighlight(this.state.currentTrackIndex);
-        }
+        this.managers.playlistRenderer?.updateHighlight(index);
 
         if (this.elements.prevButton) this.elements.prevButton.disabled = false;
         if (this.elements.nextButton) this.elements.nextButton.disabled = false;
 
-        this.updateMediaSession();
+        this._updateMediaSession();
+    }
+
+    _setPlayerSrc(src, track) {
+        const player = this.elements.player;
+        if (!player) return;
+        player.src = src;
+        player.load();
+        if (track.analysis?.silence?.start > 0.1)
+            player.currentTime = track.analysis.silence.start;
+        player.play().catch(e => this.debugLog(`Playback failed: ${e.message}`, 'warning'));
     }
 
     _playFromURL(track) {
-        if (!this.elements.player) return;
-        
-        // Create fresh blob URL from file if available
+        if (!track) return;
+
+        // Create a fresh blob URL from the raw File object if available
         if (track.file) {
             if (track.audioURL?.startsWith('blob:')) {
-                try {
-                    URL.revokeObjectURL(track.audioURL);
-                } catch (_) {}
+                this._revokeBlobURL(track.audioURL);
             }
-            
-            const newURL = URL.createObjectURL(track.file);
-            track.audioURL = newURL;
-            this.resources.blobURLs.add(newURL);
+            track.audioURL = URL.createObjectURL(track.file);
+            this.resources.blobURLs.add(track.audioURL);
         }
-        
+
         if (!track.audioURL) {
             this.debugLog('No audio URL available for track', 'error');
             return;
         }
-        
-        this.elements.player.src = track.audioURL;
-        this.elements.player.load();
-        this.elements.player.play()
-            .catch(e => this.debugLog(`Playback failed: ${e.message}`, 'warning'));
+
+        this._setPlayerSrc(track.audioURL, track);
     }
 
-    // ── Resource management ───────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // BLOB URL MANAGEMENT
+    // ═══════════════════════════════════════════════════════════
 
-    cleanupCurrentTrack() {
-        if (this.elements.player?.src?.startsWith('blob:')) {
-            this.revokeBlobURL(this.elements.player.src);
+    _cleanupCurrentTrack() {
+        // Only revoke if it's a buffer-generated blob, not the track's own audioURL
+        const src = this.elements.player?.src;
+        if (src?.startsWith('blob:') && !this._isTrackAudioURL(src)) {
+            this._revokeBlobURL(src);
         }
     }
 
-    revokeBlobURL(url) {
+    /** Returns true if the given URL is the audioURL of any track (should not be revoked). */
+    _isTrackAudioURL(url) {
+        return this.state.playlist.some(t => t.audioURL === url);
+    }
+
+    _revokeBlobURL(url) {
         if (!url?.startsWith('blob:')) return;
-        try {
-            URL.revokeObjectURL(url);
-            this.resources.blobURLs.delete(url);
-        } catch (err) {
-            this.debugLog(`⚠️ Failed to revoke blob URL: ${err.message}`, 'warning');
-        }
+        try { URL.revokeObjectURL(url); } catch (_) {}
+        this.resources.blobURLs.delete(url);
     }
 
-    revokeBlobURLs() {
-        this.resources.blobURLs.forEach(url => {
-            try { URL.revokeObjectURL(url); } catch (_) {}
-        });
+    _revokeBlobURLs() {
+        this.resources.blobURLs.forEach(url => { try { URL.revokeObjectURL(url); } catch (_) {} });
         this.resources.blobURLs.clear();
-        this.debugLog('🧹 Revoked all blob URLs', 'info');
     }
 
-    // ── Metadata display ──────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // METADATA DISPLAY
+    // ═══════════════════════════════════════════════════════════
 
-    displayMetadata(metadata) {
+    _displayMetadata(metadata) {
         if (!metadata) return;
 
-        if (this.elements.trackTitle) {
-            this.elements.trackTitle.textContent  = metadata.title  || 'Unknown Title';
-        }
-        if (this.elements.trackArtist) {
-            this.elements.trackArtist.textContent = metadata.artist || 'Unknown Artist';
-        }
-        if (this.elements.trackAlbum) {
-            this.elements.trackAlbum.textContent  = metadata.album  || 'Unknown Album';
-        }
+        if (this.elements.trackTitle)  this.elements.trackTitle.textContent  = metadata.title  || 'Unknown Title';
+        if (this.elements.trackArtist) this.elements.trackArtist.textContent = metadata.artist || 'Unknown Artist';
+        if (this.elements.trackAlbum)  this.elements.trackAlbum.textContent  = metadata.album  || 'Unknown Album';
 
         if (metadata.image && this.elements.coverArt) {
             this.elements.coverArt.src = metadata.image;
             this.elements.coverArt.onload = () => {
                 this.elements.coverArt.classList.add('loaded');
-                if (this.elements.coverPlaceholder) {
-                    this.elements.coverPlaceholder.style.display = 'none';
-                }
-                
-                const color = this.extractAlbumColor(this.elements.coverArt);
-                this.applyAlbumColor(color);
+                if (this.elements.coverPlaceholder) this.elements.coverPlaceholder.style.display = 'none';
+                this._applyAlbumColor(this._extractAlbumColor(this.elements.coverArt));
             };
             this.elements.coverArt.onerror = () => {
                 this.elements.coverArt.src = '';
                 this.elements.coverArt.classList.remove('loaded');
-                if (this.elements.coverPlaceholder) {
-                    this.elements.coverPlaceholder.style.display = 'flex';
-                }
-                this.applyAlbumColor(null);
+                if (this.elements.coverPlaceholder) this.elements.coverPlaceholder.style.display = 'flex';
+                this._applyAlbumColor(null);
             };
         } else if (this.elements.coverArt) {
             this.elements.coverArt.src = '';
             this.elements.coverArt.classList.remove('loaded');
-            if (this.elements.coverPlaceholder) {
-                this.elements.coverPlaceholder.style.display = 'flex';
-            }
-            this.applyAlbumColor(null);
+            if (this.elements.coverPlaceholder) this.elements.coverPlaceholder.style.display = 'flex';
+            this._applyAlbumColor(null);
         }
     }
 
-    clearMetadata() {
-        if (this.elements.trackTitle) {
-            this.elements.trackTitle.textContent  = 'No track loaded';
-        }
-        if (this.elements.trackArtist) {
-            this.elements.trackArtist.textContent = '--';
-        }
-        if (this.elements.trackAlbum) {
-            this.elements.trackAlbum.textContent  = '--';
-        }
+    _clearMetadata() {
+        if (this.elements.trackTitle)  this.elements.trackTitle.textContent  = 'No track loaded';
+        if (this.elements.trackArtist) this.elements.trackArtist.textContent = '--';
+        if (this.elements.trackAlbum)  this.elements.trackAlbum.textContent  = '--';
         if (this.elements.coverArt) {
             this.elements.coverArt.src = '';
             this.elements.coverArt.classList.remove('loaded');
         }
-        if (this.elements.coverPlaceholder) {
-            this.elements.coverPlaceholder.style.display = 'flex';
-        }
-        if (this.managers.lyrics) {
-            this.managers.lyrics.clearLyrics();
-        }
-        this.applyAlbumColor(null);
+        if (this.elements.coverPlaceholder) this.elements.coverPlaceholder.style.display = 'flex';
+        this.managers.lyrics?.clearLyrics();
+        this._applyAlbumColor(null);
     }
 
-    // ── Playlist helpers ──────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // ALBUM COLOR EXTRACTION
+    // ═══════════════════════════════════════════════════════════
 
-    updatePlaylist() {
-        if (this.managers.playlistRenderer) {
-            this.managers.playlistRenderer.setPlaylist(this.state.playlist, this.state.currentTrackIndex);
+    _extractAlbumColor(imgEl) {
+        if (!imgEl?.complete || !imgEl.naturalWidth) return null;
+
+        const cacheKey = imgEl.src;
+        if (this.colorCache.has(cacheKey)) return this.colorCache.get(cacheKey);
+
+        try {
+            const SIZE   = 50;
+            const canvas = document.createElement('canvas');
+            canvas.width = canvas.height = SIZE;
+            const ctx  = canvas.getContext('2d');
+            ctx.drawImage(imgEl, 0, 0, SIZE, SIZE);
+
+            const data = ctx.getImageData(0, 0, SIZE, SIZE).data;
+            let r = 0, g = 0, b = 0, count = 0;
+
+            for (let i = 0; i < data.length; i += 4) {
+                const lum = (data[i] + data[i+1] + data[i+2]) / 3;
+                if (lum > 20 && lum < 235) {
+                    r += data[i]; g += data[i+1]; b += data[i+2];
+                    count++;
+                }
+            }
+            if (!count) return null;
+
+            r = Math.floor(r / count);
+            g = Math.floor(g / count);
+            b = Math.floor(b / count);
+
+            const color = {
+                r, g, b,
+                rgb:     `rgb(${r},${g},${b})`,
+                rgba:    a  => `rgba(${r},${g},${b},${a})`,
+                darken:  d  => `rgb(${Math.max(0,r-d)},${Math.max(0,g-d)},${Math.max(0,b-d)})`,
+                lighten: d  => `rgb(${Math.min(255,r+d)},${Math.min(255,g+d)},${Math.min(255,b+d)})`,
+            };
+
+            this.colorCache.set(cacheKey, color);
+            return color;
+        } catch (err) {
+            this.debugLog(`Color extraction failed: ${err.message}`, 'warning');
+            return null;
         }
-        this.updatePlaylistStatus();
     }
 
-    updatePlaylistStatus() {
+    _applyAlbumColor(color) {
+        this._setWindowRef('albumColors', color || null);
+
+        if (this.managers.lyrics) this.managers.lyrics.setDominantColor?.(color);
+
+        const mc = this.elements.metadataContainer || document.getElementById('metadata-container');
+
+        if (!color) {
+            if (mc) {
+                mc.style.background  = 'linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)';
+                mc.style.boxShadow   = '0 8px 32px rgba(220,53,69,0.2)';
+                mc.style.border      = '';
+            }
+            if (!document.body.classList.contains('custom-bg')) {
+                document.body.style.backgroundImage = `
+                    radial-gradient(circle at top right, rgba(220,53,69,0.05), transparent 40%),
+                    radial-gradient(circle at bottom left, rgba(0,123,255,0.05), transparent 40%)`;
+            }
+            return;
+        }
+
+        if (mc) {
+            mc.style.background  = `linear-gradient(135deg, ${color.darken(40)} 0%, ${color.darken(60)} 100%)`;
+            mc.style.boxShadow   = `0 8px 32px ${color.rgba(0.4)}`;
+            mc.style.border      = `1px solid ${color.rgba(0.3)}`;
+        }
+
+        if (!document.body.classList.contains('custom-bg')) {
+            document.body.style.backgroundImage = `
+                radial-gradient(circle at top right, ${color.rgba(0.15)}, transparent 40%),
+                radial-gradient(circle at bottom left, ${color.rgba(0.1)}, transparent 40%)`;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // PLAYLIST HELPERS
+    // ═══════════════════════════════════════════════════════════
+
+    _updatePlaylist() {
+        this.managers.playlistRenderer?.setPlaylist(this.state.playlist, this.state.currentTrackIndex);
+        this._updatePlaylistStatus();
+    }
+
+    _updatePlaylistStatus() {
         const n = this.state.playlist.length;
-        if (this.elements.playlistStatus)
-            this.elements.playlistStatus.textContent = `${n} track${n !== 1 ? 's' : ''} loaded`;
-
+        this._setStatus(`${n} track${n !== 1 ? 's' : ''} loaded`);
         if (this.elements.clearButton)   this.elements.clearButton.disabled   = n === 0;
         if (this.elements.shuffleButton) this.elements.shuffleButton.disabled = n === 0;
         if (this.elements.loopButton)    this.elements.loopButton.disabled    = n === 0;
     }
 
-    updateMediaSession() {
+    _setStatus(text) {
+        if (this.elements.playlistStatus) this.elements.playlistStatus.textContent = text;
+    }
+
+    _updateMediaSession() {
         if (!('mediaSession' in navigator) || this.state.currentTrackIndex === -1) return;
         const track = this.state.playlist[this.state.currentTrackIndex];
         const meta  = track.metadata || {};
-
         navigator.mediaSession.metadata = new MediaMetadata({
             title:   meta.title  || track.fileName,
             artist:  meta.artist || 'Unknown Artist',
             album:   meta.album  || 'Unknown Album',
             artwork: meta.image  ? [{ src: meta.image, sizes: '512x512', type: 'image/png' }] : [],
         });
-
-        if (window.backgroundAudioHandler) {
-            window.backgroundAudioHandler.updateMediaSessionMetadata();
-        }
+        window.backgroundAudioHandler?.updateMediaSessionMetadata?.();
     }
 
-    // ── Playback controls ─────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // PLAYBACK CONTROLS
+    // ═══════════════════════════════════════════════════════════
+
+    togglePlayPause() {
+        const p = this.elements.player;
+        if (!p) return;
+        if (p.paused) p.play().catch(e => this.debugLog(`Play failed: ${e.message}`, 'error'));
+        else          p.pause();
+    }
+
+    _seekForward()  { const p = this.elements.player; if (p) p.currentTime = Math.min(p.currentTime + 5, p.duration || 0); }
+    _seekBackward() { const p = this.elements.player; if (p) p.currentTime = Math.max(p.currentTime - 5, 0); }
 
     playNext() {
         if (this.state.playlist.length === 0) return;
-
-        if (this.state.currentTrackIndex !== -1 && this.managers.volume) {
-            const t  = this.state.playlist[this.state.currentTrackIndex];
-            const id = `${t.metadata?.artist || 'Unknown'}_${t.metadata?.title || t.fileName}`;
-            this.managers.volume.rememberTrackVolume(id, this.managers.volume.getVolume());
-        }
+        this._rememberCurrentVolume();
 
         let next;
         if (this.state.isShuffled && this.state.shuffledPlaylist.length > 0) {
-            const currentPos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
-            const nextPos = currentPos + 1;
-            
-            if (nextPos >= this.state.shuffledPlaylist.length) {
-                if (this.state.loopMode === 'all') {
-                    next = this.state.shuffledPlaylist[0];
-                } else {
-                    return;
-                }
+            const pos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
+            const nxt = pos + 1;
+            if (nxt >= this.state.shuffledPlaylist.length) {
+                if (this.state.loopMode === 'all') next = this.state.shuffledPlaylist[0];
+                else return;
             } else {
-                next = this.state.shuffledPlaylist[nextPos];
+                next = this.state.shuffledPlaylist[nxt];
             }
         } else {
             next = this.state.currentTrackIndex + 1;
@@ -1615,152 +1359,108 @@ class MusicPlayerApp {
                 else return;
             }
         }
-        
-        // Bounds check
-        if (next >= 0 && next < this.state.playlist.length) {
-            this.loadTrack(next);
-        }
+
+        if (next >= 0 && next < this.state.playlist.length) this.loadTrack(next);
     }
 
     playPrevious() {
         if (this.state.playlist.length === 0) return;
-        
+
         if (this.state.isShuffled && this.state.shuffledPlaylist.length > 0) {
-            const currentPos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
-            
-            if (currentPos === -1) {
-                if (this.state.currentTrackIndex > 0) {
-                    this.loadTrack(this.state.currentTrackIndex - 1);
-                } else if (this.state.loopMode === 'all') {
-                    this.loadTrack(this.state.playlist.length - 1);
-                }
+            const pos = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
+
+            if (pos === -1) {
+                // Current track not in shuffle list — just go to adjacent
+                if (this.state.currentTrackIndex > 0) this.loadTrack(this.state.currentTrackIndex - 1);
+                else if (this.state.loopMode === 'all') this.loadTrack(this.state.playlist.length - 1);
                 return;
             }
-            
-            const prevPos = currentPos - 1;
-            
+
+            const prevPos = pos - 1;
             if (prevPos < 0) {
                 if (this.state.loopMode === 'all') {
-                    const prev = this.state.shuffledPlaylist[this.state.shuffledPlaylist.length - 1];
-                    if (prev !== undefined && prev >= 0 && prev < this.state.playlist.length) {
-                        this.loadTrack(prev);
-                    }
+                    const last = this.state.shuffledPlaylist[this.state.shuffledPlaylist.length - 1];
+                    if (last !== undefined) this.loadTrack(last);
                 }
                 return;
             }
-            
+
             const prev = this.state.shuffledPlaylist[prevPos];
-            if (prev !== undefined && prev >= 0 && prev < this.state.playlist.length) {
-                this.loadTrack(prev);
-            }
+            if (prev !== undefined) this.loadTrack(prev);
         } else {
-            if (this.state.currentTrackIndex > 0) {
+            if (this.state.currentTrackIndex > 0)
                 this.loadTrack(this.state.currentTrackIndex - 1);
-            } else if (this.state.loopMode === 'all') {
+            else if (this.state.loopMode === 'all')
                 this.loadTrack(this.state.playlist.length - 1);
-            }
         }
     }
 
-    handleTrackEnded() {
-        this._rafStop();
-        if (this.state.loopMode === 'one' && this.elements.player) {
-            this.elements.player.currentTime = 0;
-            this.elements.player.play();
-        } else {
-            this.playNext();
-        }
+    _rememberCurrentVolume() {
+        if (this.state.currentTrackIndex === -1 || !this.managers.volume) return;
+        const t  = this.state.playlist[this.state.currentTrackIndex];
+        const id = `${t.metadata?.artist || 'Unknown'}_${t.metadata?.title || t.fileName}`;
+        this.managers.volume.rememberTrackVolume?.(id, this.managers.volume.getVolume());
     }
 
     toggleShuffle() {
         this.state.isShuffled = !this.state.isShuffled;
-        if (this.elements.shuffleButton) {
-            this.elements.shuffleButton.classList.toggle('active', this.state.isShuffled);
-        }
-        
+        this.elements.shuffleButton?.classList.toggle('active', this.state.isShuffled);
+
         if (this.state.isShuffled) {
-            this.state.shuffledPlaylist = [...Array(this.state.playlist.length).keys()];
-            
-            // Fisher-Yates shuffle
-            for (let i = this.state.shuffledPlaylist.length - 1; i > 0; i--) {
+            // Build index array and Fisher-Yates shuffle
+            const arr = [...Array(this.state.playlist.length).keys()];
+            for (let i = arr.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
-                [this.state.shuffledPlaylist[i], this.state.shuffledPlaylist[j]] = 
-                [this.state.shuffledPlaylist[j], this.state.shuffledPlaylist[i]];
+                [arr[i], arr[j]] = [arr[j], arr[i]];
             }
-            
-            const currentInShuffled = this.state.shuffledPlaylist.indexOf(this.state.currentTrackIndex);
-            if (currentInShuffled !== -1) {
-                this.state.shuffledPlaylist.splice(currentInShuffled, 1);
-                this.state.shuffledPlaylist.unshift(this.state.currentTrackIndex);
-            }
+            // Ensure current track is first so "next" doesn't repeat it
+            const ci = arr.indexOf(this.state.currentTrackIndex);
+            if (ci !== -1) { arr.splice(ci, 1); arr.unshift(this.state.currentTrackIndex); }
+            this.state.shuffledPlaylist = arr;
         } else {
             this.state.shuffledPlaylist = [];
         }
-        
-        if (this.managers.audioBuffer) {
-            this.managers.audioBuffer.setShuffleState(this.state.isShuffled);
-        }
-        if (this.managers.ui) {
-            this.managers.ui.showToast(`Shuffle ${this.state.isShuffled ? 'on' : 'off'}`, 'info');
-        }
+
+        this.managers.audioBuffer?.setShuffleState(this.state.isShuffled);
+        this.managers.ui?.showToast(`Shuffle ${this.state.isShuffled ? 'on' : 'off'}`, 'info');
     }
 
     cycleLoopMode() {
-        const modes = ['off', 'all', 'one'];
-        this.state.loopMode = modes[(modes.indexOf(this.state.loopMode) + 1) % modes.length];
-        
-        if (this.elements.loopButton) {
-            this.elements.loopButton.classList.toggle('active', this.state.loopMode !== 'off');
-            
-            if (this.state.loopMode === 'one') {
-                this.elements.loopButton.classList.add('loop-one');
-            } else {
-                this.elements.loopButton.classList.remove('loop-one');
-            }
-            
-            const label = this.elements.loopButton.querySelector('.control-label');
-            if (label) {
-                const modeText = {
-                    'off': 'Loop Off',
-                    'all': 'Loop All',
-                    'one': 'Loop One'
-                };
-                label.textContent = modeText[this.state.loopMode];
-            }
+        const MODES = ['off', 'all', 'one'];
+        const LABELS = { off: 'Loop Off', all: 'Loop All', one: 'Loop One' };
+        this.state.loopMode = MODES[(MODES.indexOf(this.state.loopMode) + 1) % MODES.length];
+
+        const btn = this.elements.loopButton;
+        if (btn) {
+            btn.classList.toggle('active',   this.state.loopMode !== 'off');
+            btn.classList.toggle('loop-one', this.state.loopMode === 'one');
+            const lbl = btn.querySelector('.control-label');
+            if (lbl) lbl.textContent = LABELS[this.state.loopMode];
         }
-        
-        if (this.managers.ui) {
-            this.managers.ui.showToast(`Loop: ${this.state.loopMode}`, 'info');
-        }
+
+        this.managers.ui?.showToast(`Loop: ${this.state.loopMode}`, 'info');
     }
 
     clearPlaylist() {
         if (!confirm('Clear playlist?')) return;
 
         this._rafStop();
-        
-        if (this.managers.fileLoading) {
-            this.managers.fileLoading.cleanupPlaylist(this.state.playlist);
-        }
-        if (this.managers.audioBuffer) {
-            this.managers.audioBuffer.clearAllBuffers();
-        }
-        this.revokeBlobURLs();
+        this.managers.fileLoading?.cleanupPlaylist(this.state.playlist);
+        this.managers.audioBuffer?.clearAllBuffers();
+        this._revokeBlobURLs();
 
         this.state.playlist          = [];
         this.state.currentTrackIndex = -1;
-        this.state.shuffledPlaylist = [];
+        this.state.shuffledPlaylist  = [];
 
-        if (this.elements.player) {
-            this.elements.player.pause();
-            this.elements.player.src = '';
-        }
+        const p = this.elements.player;
+        if (p) { p.pause(); p.src = ''; }
 
-        this.clearMetadata();
-        this.updatePlaylist();
+        this._clearMetadata();
+        this._updatePlaylist();
 
         this._raf.lastPercent = -1;
-        if (this.elements.progressBar)        this.elements.progressBar.style.width  = '0%';
+        if (this.elements.progressBar)        this.elements.progressBar.style.width            = '0%';
         if (this.elements.currentTimeDisplay) this.elements.currentTimeDisplay.textContent = '0:00';
         if (this.elements.durationDisplay)    this.elements.durationDisplay.textContent    = '0:00';
 
@@ -1768,94 +1468,59 @@ class MusicPlayerApp {
         if (this.elements.nextButton) this.elements.nextButton.disabled = true;
     }
 
-    // ── Audio event handlers ──────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // AUDIO EVENT HANDLERS
+    // ═══════════════════════════════════════════════════════════
 
-    handleMetadataLoaded() {
+    _handleMetadataLoaded() {
         if (!this.elements.durationDisplay || !this.elements.player) return;
         const dur = this.elements.player.duration;
         this.elements.durationDisplay.textContent = isFinite(dur) ? this.formatTime(dur) : '0:00';
     }
 
-    handlePlay() {
-        if (this.managers.audioPipeline?.isInitialized) {
-            if (this.managers.audioPipeline.audioContext.state === 'suspended') {
-                this.managers.audioPipeline.resume();
-            }
-        }
-        if (window.backgroundAudioHandler) {
-            window.backgroundAudioHandler.updatePlaybackState('playing');
-        }
-        if (this.managers.performance) {
-            this.managers.performance.setPlayState(true);
-        }
+    _handlePlay() {
+        const ap = this.managers.audioPipeline;
+        if (ap?.isInitialized && ap.audioContext.state === 'suspended') ap.resume();
+        window.backgroundAudioHandler?.updatePlaybackState?.('playing');
+        this.managers.performance?.setPlayState(true);
         this._rafStart();
     }
 
-    handlePause() {
-        if (window.backgroundAudioHandler) {
-            window.backgroundAudioHandler.updatePlaybackState('paused');
-        }
-        if (this.managers.performance) {
-            this.managers.performance.setPlayState(false);
-        }
+    _handlePause() {
+        window.backgroundAudioHandler?.updatePlaybackState?.('paused');
+        this.managers.performance?.setPlayState(false);
         this._rafStop();
     }
 
-    handlePlayerError(e) {
+    _handleTrackEnded() {
+        this._rafStop();
+        if (this.state.loopMode === 'one' && this.elements.player) {
+            this.elements.player.currentTime = 0;
+            this.elements.player.play().catch(() => {});
+        } else {
+            this.playNext();
+        }
+    }
+
+    _handlePlayerError(e) {
         if (this.state.currentTrackIndex === -1) return;
-        const info = this.state.playlist[this.state.currentTrackIndex];
-        if (this.managers.errorRecovery) {
-            this.managers.errorRecovery.handleAudioError(this.elements.player, info);
-        }
+        this.managers.errorRecovery?.handleAudioError(
+            this.elements.player,
+            this.state.playlist[this.state.currentTrackIndex]
+        );
     }
 
-    // ── Equalizer ─────────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // BACKGROUND ANALYSIS
+    // ═══════════════════════════════════════════════════════════
 
-    updateEqualizer(type, value) {
-        if (!this.managers.audioPipeline?.isInitialized) return;
-        const f = {
-            bass:   this.managers.audioPipeline.bassFilter,
-            mid:    this.managers.audioPipeline.midFilter,
-            treble: this.managers.audioPipeline.trebleFilter,
-        };
-        if (f[type] && this.managers.audioPipeline) {
-            this.managers.audioPipeline.setGain(f[type], value);
-        }
-    }
-
-    resetEqualizer() {
-        [
-            [this.elements.eqBassSlider,   this.elements.bassValue  ],
-            [this.elements.eqMidSlider,    this.elements.midValue   ],
-            [this.elements.eqTrebleSlider, this.elements.trebleValue],
-        ].forEach(([slider, display]) => {
-            if (!slider) return;
-            slider.value = 0;
-            if (display) display.textContent = '0 dB';
-        });
-
-        const p = this.managers.audioPipeline;
-        if (p?.bassFilter) {
-            p.setGain(p.bassFilter,   0);
-            p.setGain(p.midFilter,    0);
-            p.setGain(p.trebleFilter, 0);
-        }
-    }
-
-    // ── Background analysis ───────────────────────────────────────────────────
-
-    async startBackgroundAnalysis() {
+    async _startBackgroundAnalysis() {
         if (this.state.backgroundAnalysisRunning || !this.managers.analyzer) return;
         this.state.backgroundAnalysisRunning = true;
 
         const pending = this.state.playlist
             .map((track, index) => ({ track, index }))
-            .filter(({ track }) => !track.analysis);
-
-        if (pending.length === 0) {
-            this.state.backgroundAnalysisRunning = false;
-            return;
-        }
+            .filter(({ track }) => !track.analysis && track.file);
 
         for (let i = 0; i < pending.length; i += 3) {
             if (this.state.destroyed || this.state.playlist.length === 0) break;
@@ -1863,23 +1528,24 @@ class MusicPlayerApp {
             await Promise.all(pending.slice(i, i + 3).map(async ({ track, index }) => {
                 if (this.state.playlist[index] !== track) return;
                 try {
-                    const blob     = await (await fetch(track.audioURL)).blob();
-                    const file     = new File([blob], track.fileName, { type: 'audio/mpeg' });
-                    const analysis = await this.managers.analyzer.analyzeTrack(file, track.fileName);
+                    // Use the raw File object — never rely on blob URLs that may be revoked
+                    const analysis = await this.managers.analyzer.analyzeTrack(track.file, track.fileName);
                     this.state.playlist[index].analysis = analysis;
                 } catch { /* best-effort */ }
             }));
 
-            this.updatePlaylist();
+            this._updatePlaylist();
             await new Promise(r => setTimeout(r, 500));
         }
 
         this.state.backgroundAnalysisRunning = false;
     }
 
-    // ── Persistence ───────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // PERSISTENCE
+    // ═══════════════════════════════════════════════════════════
 
-    savePlaylistToStorage() {
+    _savePlaylistToStorage() {
         try {
             localStorage.setItem('savedPlaylist', JSON.stringify(
                 this.state.playlist.map(t => ({
@@ -1889,25 +1555,26 @@ class MusicPlayerApp {
                     duration: t.duration,
                 }))
             ));
-        } catch { /* storage full */ }
+        } catch (e) {
+            this.debugLog(`Could not save playlist: ${e.message}`, 'warning');
+        }
     }
 
-    async restoreState() {
+    async _restoreState() {
         try {
-            if (localStorage.getItem('crossfadeEnabled') === 'true' && this.managers.crossfade)
-                this.managers.crossfade.setEnabled(true);
-            if (localStorage.getItem('autoEQEnabled') === 'true' && this.managers.autoEQ)
-                this.managers.autoEQ.setEnabled(true);
-
-            if (this.managers.audioBuffer) {
-                this.managers.audioBuffer.setShuffleState(this.state.isShuffled);
-            }
-        } catch { /* silent fail */ }
+            if (localStorage.getItem('crossfadeEnabled') === 'true') this.managers.crossfade?.setEnabled(true);
+            if (localStorage.getItem('autoEQEnabled')    === 'true') this.managers.autoEQ?.setEnabled(true);
+            this.managers.audioBuffer?.setShuffleState(this.state.isShuffled);
+        } catch (e) {
+            this.debugLog(`Restore state error: ${e.message}`, 'warning');
+        }
     }
 
-    // ── Metadata editor ───────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // METADATA EDITOR
+    // ═══════════════════════════════════════════════════════════
 
-    editTrackMetadata(index) {
+    _editTrackMetadata(index) {
         const track = this.state.playlist[index];
         if (!track || !this.managers.metadataEditor) return;
 
@@ -1919,13 +1586,11 @@ class MusicPlayerApp {
                 album:  track.metadata?.album  || 'Unknown Album',
             },
             (trackIndex, newMeta) => {
-                if (this.managers.customMetadata) {
-                    this.managers.customMetadata.save(
-                        this.state.playlist[trackIndex].fileName,
-                        this.state.playlist[trackIndex].duration || 0,
-                        newMeta
-                    );
-                }
+                this.managers.customMetadata?.save(
+                    this.state.playlist[trackIndex].fileName,
+                    this.state.playlist[trackIndex].duration || 0,
+                    newMeta
+                );
 
                 this.state.playlist[trackIndex].metadata = {
                     ...this.state.playlist[trackIndex].metadata,
@@ -1933,14 +1598,49 @@ class MusicPlayerApp {
                     hasMetadata: true,
                 };
 
-                this.updatePlaylist();
+                this._updatePlaylist();
                 if (trackIndex === this.state.currentTrackIndex)
-                    this.displayMetadata(this.state.playlist[trackIndex].metadata);
+                    this._displayMetadata(this.state.playlist[trackIndex].metadata);
             }
         );
     }
 
-    // ── Utilities ─────────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // BACKGROUND AUDIO (Media Session)
+    // ═══════════════════════════════════════════════════════════
+
+    async _initBackgroundAudio() {
+        try {
+            const ok = await window.backgroundAudioHandler.init({
+                player:               this.elements.player,
+                playlist:             () => this.state.playlist,
+                getCurrentTrackIndex: () => this.state.currentTrackIndex,
+                onMediaAction: {
+                    previous: () => this.playPrevious(),
+                    next:     () => this.playNext(),
+                },
+            });
+            if (ok) this.debugLog('✅ Background audio activated', 'success');
+        } catch (err) {
+            this.debugLog(`⚠️ Background audio: ${err.message}`, 'warning');
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // UTILITIES
+    // ═══════════════════════════════════════════════════════════
+
+    /** Register an event listener and track it for cleanup. */
+    _wire(el, event, handler, opts) {
+        if (!el) return;
+        el.addEventListener(event, handler, opts);
+        this.resources.eventListeners.push({ element: el, event, handler });
+    }
+
+    _setWindowRef(key, value) {
+        window[key] = value;
+        this.resources.windowRefs.add(key);
+    }
 
     formatTime(seconds) {
         if (!isFinite(seconds) || seconds < 0) return '0:00';
@@ -1950,94 +1650,75 @@ class MusicPlayerApp {
     }
 
     debugLog(message, type = 'info') {
-        if (!this.state.debugMode && type !== 'error') return;
+        const PREFIXES = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+        const prefix   = PREFIXES[type] ?? 'ℹ️';
 
-        const prefix = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' }[type] ?? 'ℹ️';
-        console.log(`${prefix} ${message}`);
+        if (type === 'error') console.error(`${prefix} ${message}`);
+        else if (this.state.debugMode) console.log(`${prefix} ${message}`);
 
         if (this.elements.debugPanel && this.state.debugMode) {
             const entry       = document.createElement('div');
             entry.className   = `debug-entry debug-${type}`;
-            entry.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+            entry.textContent = `${new Date().toLocaleTimeString()} — ${message}`;
             this.elements.debugPanel.appendChild(entry);
             while (this.elements.debugPanel.children.length > 100)
                 this.elements.debugPanel.removeChild(this.elements.debugPanel.firstChild);
         }
     }
 
-    // ── Destroy ───────────────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════
+    // DESTROY
+    // ═══════════════════════════════════════════════════════════
 
     destroy() {
-        if (this.state.destroyed) {
-            this.debugLog('⚠️ Already destroyed', 'warning');
-            return;
-        }
-
+        if (this.state.destroyed) return;
         this.debugLog('🧹 Destroying MusicPlayerApp…', 'info');
 
         this._rafStop();
 
-        if (this.elements.player) {
-            this.elements.player.pause();
-            this.elements.player.src = '';
-        }
+        const p = this.elements.player;
+        if (p) { p.pause(); p.src = ''; }
 
-        this.revokeBlobURLs();
-
-        this.resources.intervals.forEach(id => clearInterval(id));
-        this.resources.intervals.clear();
-
-        this.resources.timeouts.forEach(id => clearTimeout(id));
-        this.resources.timeouts.clear();
+        this._revokeBlobURLs();
 
         this.resources.eventListeners.forEach(({ element, event, handler }) => {
             try { element.removeEventListener(event, handler); } catch (_) {}
         });
         this.resources.eventListeners = [];
 
-        // Destroy ALL managers with proper null checking
-        const managersToDestroy = [
+        const MANAGERS = [
             'performance', 'audioBuffer', 'audioPipeline', 'lyrics', 'ui',
             'volume', 'crossfade', 'metadata', 'vtt', 'errorRecovery',
             'analysisParser', 'metadataEditor', 'analyzer', 'customMetadata',
             'folderPersistence', 'fileLoading', 'customBackground',
-            'playlistRenderer', 'audioPresets', 'autoEQ', 'worker',
-            'imageOptimizer'
+            'playlistRenderer', 'audioPresets', 'autoEQ', 'worker', 'imageOptimizer',
         ];
-
-        managersToDestroy.forEach(key => {
-            const m = this.managers[key];
-            if (m && typeof m.destroy === 'function') {
-                try { m.destroy(); } catch (e) {
-                    this.debugLog(`⚠️ Failed to destroy ${key}: ${e.message}`, 'warning');
-                }
+        MANAGERS.forEach(key => {
+            try { this.managers[key]?.destroy?.(); } catch (e) {
+                this.debugLog(`⚠️ Failed to destroy ${key}: ${e.message}`, 'warning');
             }
         });
 
         this.colorCache.clear();
 
-        // Clean up all window references
-        this.resources.windowRefs.forEach(key => {
-            try { delete window[key]; } catch (_) {}
-        });
+        this.resources.windowRefs.forEach(key => { try { delete window[key]; } catch (_) {} });
         this.resources.windowRefs.clear();
 
-        // Release object graph
         this.managers = {};
         this.elements = {};
-
         this.state.destroyed   = true;
         this.state.initialized = false;
 
-        this.debugLog('✅ Destroyed successfully', 'success');
+        console.log('✅ MusicPlayerApp destroyed');
     }
 }
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
+
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🎵 Initializing — v5.0');
+    console.log('🎵 Initializing — v5.1');
     window.musicPlayerApp = new MusicPlayerApp();
     window.musicPlayerApp.init();
 });
 
-console.log('✅ script.js loaded — v5.0');
+console.log('✅ script.js v5.1 loaded');
