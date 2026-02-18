@@ -1,509 +1,463 @@
 /* ============================================
-   Audio Presets Manager - ULTRA-REFINED EDITION
+   Audio Presets Manager — v1.1
    Dynamic, Context-Aware, Analysis-Driven EQ System
    ============================================ */
 
 class AudioPresetsManager {
-    constructor(bassFilter, midFilter, trebleFilter, debugLog) {
-        this.bassFilter = bassFilter;
-        this.midFilter = midFilter;
+
+    // ─── Static preset definitions ────────────────────────────────────────────
+
+    static PRESETS = {
+        flat: {
+            name: 'Flat (Reference)',
+            bass: 0, mid: 0, treble: 0,
+            description: 'No coloration — pure source',
+            philosophy: 'Neutral reference for well-mastered tracks',
+        },
+
+        // Genre-specific
+        electronic: {
+            name: 'Electronic / EDM',
+            bass: 4, mid: -2, treble: 4,
+            description: 'Deep sub-bass with crystalline highs',
+            philosophy: 'V-curve emphasising synthetic frequency extremes',
+        },
+        rock: {
+            name: 'Rock',
+            bass: 4, mid: 1, treble: 4,
+            description: 'Aggressive and punchy rock sound',
+            philosophy: 'Enhanced attack and presence without losing guitar body',
+        },
+        metal: {
+            name: 'Metal',
+            bass: 3, mid: -1, treble: 4,
+            description: 'Tight bass with extreme clarity',
+            philosophy: 'Precision and aggression, no muddiness',
+        },
+        jazz: {
+            name: 'Jazz',
+            bass: 3, mid: 2, treble: 4,
+            description: 'Natural warmth with detailed highs',
+            philosophy: 'Preserves acoustic instrument timbre and space',
+        },
+        classical: {
+            name: 'Classical',
+            bass: 1, mid: 0, treble: 3,
+            description: 'Minimal processing, maximum naturalness',
+            philosophy: 'Respects original recording and hall acoustics',
+        },
+        acoustic: {
+            name: 'Acoustic',
+            bass: 2, mid: 4, treble: 2,
+            description: 'Intimate, warm acoustic character',
+            philosophy: 'Midrange-focused for natural instrument tone',
+        },
+        hiphop: {
+            name: 'Hip-Hop',
+            bass: 4, mid: -2, treble: 3,
+            description: 'Deep bass with crisp vocal presence',
+            philosophy: 'Sub-bass emphasis with clear vocal intelligibility',
+        },
+
+        // Context-specific
+        vocal: {
+            name: 'Vocal Clarity',
+            bass: -3, mid: 6, treble: 3,
+            description: 'Maximised vocal intelligibility',
+            philosophy: 'Aggressive presence boost with controlled low-end',
+        },
+        podcast: {
+            name: 'Podcast / Speech',
+            bass: -6, mid: 7, treble: 1,
+            description: 'Optimised for spoken word',
+            philosophy: 'Maximum intelligibility, minimal listener fatigue',
+        },
+        bassBoost: {
+            name: 'Bass Boost',
+            bass: 5, mid: -1, treble: 0,
+            description: 'Enhanced deep bass for deficient tracks',
+            philosophy: 'Adds missing low-end without muddying',
+        },
+        trebleBoost: {
+            name: 'Treble Boost',
+            bass: 0, mid: 1, treble: 4,
+            description: 'Brightens dark / vintage recordings',
+            philosophy: 'Restores lost high-frequency detail',
+        },
+
+        // Mastering / quality
+        vintageTape: {
+            name: 'Vintage Tape',
+            bass: 2, mid: 1, treble: 4,
+            description: 'Compensates for analog tape aging',
+            philosophy: 'Gentle restoration of frequency extremes',
+        },
+        loudnessWar: {
+            name: 'Loudness War Victim',
+            bass: 3, mid: 0, treble: 4,
+            description: 'Helps over-compressed modern tracks',
+            philosophy: 'Attempts to restore dynamic perception',
+        },
+        liveRecording: {
+            name: 'Live Recording',
+            bass: 2, mid: 3, treble: 4,
+            description: 'Enhances live energy and space',
+            philosophy: 'Emphasises ambience and crowd energy',
+        },
+        lofi: {
+            name: 'Lo-Fi',
+            bass: 4, mid: 2, treble: -2,
+            description: 'Warm, nostalgic character',
+            philosophy: 'Embraces imperfection and warmth',
+        },
+    };
+
+    // ─── Constructor ──────────────────────────────────────────────────────────
+
+    constructor(bassFilter, midFilter, trebleFilter, debugLog = console.log) {
+        this.bassFilter   = bassFilter;
+        this.midFilter    = midFilter;
         this.trebleFilter = trebleFilter;
-        this.debugLog = debugLog;
-        
-        // Core static presets (baseline reference curves)
-        this.staticPresets = {
-            flat: {
-                name: 'Flat (Reference)',
-                bass: 0, mid: 0, treble: 0,
-                description: 'No coloration - pure source',
-                philosophy: 'Neutral reference for well-mastered tracks'
-            },
-            
-            // GENRE-SPECIFIC PRESETS (refined based on typical production characteristics)
-            electronic: {
-                name: 'Electronic/EDM',
-                bass: 4,        // Strong sub-bass for synth bass and kicks
-                mid: -2,        // Clear mid scoop for clean separation
-                treble: 4,      // Bright highs for synths and hi-hats
-                description: 'Deep sub-bass with crystalline highs',
-                philosophy: 'V-curve emphasizing synthetic frequency extremes'
-            },
-            
-            rock: {
-                name: 'Rock',
-                bass: 4,        // Upper bass punch for bass guitar and kick
-                mid: 1,         // Slight mid boost for guitar presence (not scooped!)
-                treble: 4,      // Bright for cymbals and guitar attack
-                description: 'Aggressive and punchy rock sound',
-                philosophy: 'Enhanced attack and presence without losing guitar body'
-            },
-            
-            metal: {
-                name: 'Metal',
-                bass: 3,        // Controlled low-end for tight palm mutes
-                mid: -1,        // Slight scoop for modern metal clarity
-                treble: 4,      // Very bright for double bass and cymbals
-                description: 'Tight bass with extreme clarity',
-                philosophy: 'Precision and aggression, no muddiness'
-            },
-            
-            jazz: {
-                name: 'Jazz',
-                bass: 3,        // Natural upright bass warmth
-                mid: 2,         // Piano and horn presence
-                treble: 4,      // Cymbal shimmer and ride bell clarity
-                description: 'Natural warmth with detailed highs',
-                philosophy: 'Preserves acoustic instrument timbre and space'
-            },
-            
-            classical: {
-                name: 'Classical',
-                bass: 1,        // Very subtle low-end warmth
-                mid: 0,         // Completely natural midrange
-                treble: 3,      // Gentle air for string section and halls
-                description: 'Minimal processing, maximum naturalness',
-                philosophy: 'Respects original recording and hall acoustics'
-            },
-            
-            acoustic: {
-                name: 'Acoustic',
-                bass: 2,        // Body resonance (80-120Hz)
-                mid: 4,         // String and vocal clarity
-                treble: 2,      // Natural air without harshness
-                description: 'Intimate, warm acoustic character',
-                philosophy: 'Midrange-focused for natural instrument tone'
-            },
-            
-            hiphop: {
-                name: 'Hip-Hop',
-                bass: 4,        // Massive sub-bass for 808s
-                mid: -2,        // Scooped for vocal clarity
-                treble: 3,      // Hi-hat and snare presence
-                description: 'Deep bass with crisp vocal presence',
-                philosophy: 'Sub-bass emphasis with clear vocal intelligibility'
-            },
-            
-            // CONTEXT-SPECIFIC PRESETS
-            vocal: {
-                name: 'Vocal Clarity',
-                bass: -3,       // High-pass to remove muddiness
-                mid: 6,         // Strong presence boost (vowel clarity)
-                treble: 3,      // Air for sibilance and breath
-                description: 'Maximized vocal intelligibility',
-                philosophy: 'Aggressive presence boost with controlled low-end'
-            },
-            
-            podcast: {
-                name: 'Podcast/Speech',
-                bass: -6,       // Aggressive high-pass (rumble removal)
-                mid: 7,         // Very strong presence for clarity
-                treble: 1,      // Minimal high-end (avoid sibilance)
-                description: 'Optimized for spoken word',
-                philosophy: 'Maximum intelligibility, minimal listener fatigue'
-            },
-            
-            bassBoost: {
-                name: 'Bass Boost',
-                bass: 5,        // Strong sub-bass shelf
-                mid: -1,        // Prevent mud buildup
-                treble: 0,      // Keep highs neutral
-                description: 'Enhanced deep bass for deficient tracks',
-                philosophy: 'Adds missing low-end without muddying'
-            },
-            
-            trebleBoost: {
-                name: 'Treble Boost',
-                bass: 0,        // Leave bass alone
-                mid: 1,         // Slight upper-mid lift for clarity
-                treble: 4,      // Strong high-shelf for dull recordings
-                description: 'Brightens dark/vintage recordings',
-                philosophy: 'Restores lost high-frequency detail'
-            },
-            
-            // MASTERING/QUALITY PRESETS
-            vintageTape: {
-                name: 'Vintage Tape',
-                bass: 2,        // Restore some low-end roll-off
-                mid: 1,         // Slight warmth
-                treble: 4,      // Restore tape high-frequency loss
-                description: 'Compensates for analog tape aging',
-                philosophy: 'Gentle restoration of frequency extremes'
-            },
-            
-            loudnessWar: {
-                name: 'Loudness War Victim',
-                bass: 3,        // Restore perceived low-end
-                mid: 0,         // Don't add more compression artifacts
-                treble: 4,      // Brightness to counteract dullness
-                description: 'Helps over-compressed modern tracks',
-                philosophy: 'Attempts to restore dynamic perception'
-            },
-            
-            liveRecording: {
-                name: 'Live Recording',
-                bass: 2,        // Stage/room warmth
-                mid: 3,         // Instrument separation
-                treble: 4,      // Crowd and cymbal detail
-                description: 'Enhances live energy and space',
-                philosophy: 'Emphasizes ambience and crowd energy'
-            },
-            
-            lofi: {
-                name: 'Lo-Fi',
-                bass: 4,        // Warm, rounded low-end
-                mid: 2,         // Slight haze
-                treble: -2,     // Reduce brightness for vintage vibe
-                description: 'Warm, nostalgic character',
-                philosophy: 'Embraces imperfection and warmth'
-            }
-        };
-        
-        this.currentPreset = 'flat';
-        this.lastAppliedAnalysis = null;
+        this._log         = debugLog;
+
+        this.currentPreset            = 'flat';
+        this.lastAppliedAnalysis      = null;
         this.dynamicAdjustmentEnabled = true;
+
+        // Keep a reference to the static presets on the instance so callers can
+        // reach them via either AudioPresetsManager.PRESETS or instance.staticPresets.
+        this.staticPresets = AudioPresetsManager.PRESETS;
     }
-    
+
+    // ─── Public: preset application ───────────────────────────────────────────
+
     /**
-     * SMART PRESET APPLICATION - Analyzes track and applies dynamic adjustments
+     * Apply a named preset, optionally modified by dynamic track analysis.
+     * Gain changes are applied via a 20 ms ramp (setTargetAtTime) to prevent
+     * audible pops — identical behaviour to AudioPipeline.setGain().
+     * @returns {boolean} true on success
      */
     applyPreset(presetName, trackAnalysis = null) {
-        if (!this.staticPresets[presetName]) {
-            this.debugLog(`⚠️ Unknown preset: ${presetName}, using flat`, 'warn');
+        if (!AudioPresetsManager.PRESETS[presetName]) {
+            this._log(`⚠️ Unknown preset: "${presetName}", falling back to flat`, 'warning');
             presetName = 'flat';
         }
-        
-        const basePreset = this.staticPresets[presetName];
-        let finalValues = { ...basePreset };
-        
-        // DYNAMIC ADJUSTMENT: Modify preset based on track analysis
+
+        const base   = AudioPresetsManager.PRESETS[presetName];
+        let   values = { bass: base.bass, mid: base.mid, treble: base.treble };
+
         if (this.dynamicAdjustmentEnabled && trackAnalysis) {
-            finalValues = this.applyDynamicAdjustments(finalValues, trackAnalysis, presetName);
+            values = this._applyDynamicAdjustments(values, trackAnalysis, presetName);
             this.lastAppliedAnalysis = trackAnalysis;
         }
-        
+
+        const bass   = this._clamp(values.bass);
+        const mid    = this._clamp(values.mid);
+        const treble = this._clamp(values.treble);
+
         try {
-            const bassGain = this.clampGain(finalValues.bass);
-            const midGain = this.clampGain(finalValues.mid);
-            const trebleGain = this.clampGain(finalValues.treble);
-            
-            this.bassFilter.gain.value = bassGain;
-            this.midFilter.gain.value = midGain;
-            this.trebleFilter.gain.value = trebleGain;
-            
-            this.updateUISliders(bassGain, midGain, trebleGain);
+            this._setGain(this.bassFilter,   bass);
+            this._setGain(this.midFilter,    mid);
+            this._setGain(this.trebleFilter, treble);
+
+            this._updateUISliders(bass, mid, treble);
             this.currentPreset = presetName;
-            
-            const adjustmentNote = trackAnalysis ? ' (dynamically adjusted)' : '';
-            this.debugLog(`🎛️ Applied: ${basePreset.name} [${bassGain}/${midGain}/${trebleGain} dB]${adjustmentNote}`, 'success');
-            
+
+            const note = trackAnalysis ? ' (dynamically adjusted)' : '';
+            this._log(`🎛️ Preset: ${base.name} [${this._fmt(bass)} / ${this._fmt(mid)} / ${this._fmt(treble)} dB]${note}`, 'success');
             return true;
         } catch (err) {
-            this.debugLog(`❌ Failed to apply preset: ${err.message}`, 'error');
+            this._log(`❌ Failed to apply preset: ${err.message}`, 'error');
             return false;
         }
     }
-    
+
     /**
-     * DYNAMIC ADJUSTMENTS - Context-aware EQ modifications
-     */
-    applyDynamicAdjustments(preset, analysis, presetName) {
-    const adjusted = { ...preset };
-    const {
-        energy, loudness, loudnessLUFS,
-        dynamicRange, frequencyBands,
-        spectralCentroid, isVintage,
-        vocalProminence, danceability,
-        acousticness, instrumentalness,
-        mood, bpm
-    } = analysis;
-    
-    // === FREQUENCY BALANCE ANALYSIS ===
-    const bassDeficiency = frequencyBands?.subBass < 0.12 && frequencyBands?.bass < 0.18;
-    const trebleDeficiency = frequencyBands?.brilliance < 0.08 && spectralCentroid < 1600;
-    const midExcess = frequencyBands?.midrange > 0.35;
-    const bassExcess = (frequencyBands?.subBass + frequencyBands?.bass) > 0.45;
-    
-    // === DYNAMIC RANGE ANALYSIS ===
-    const isCompressed = dynamicRange?.crestFactor < 6;
-    const isHighDR = dynamicRange?.crestFactor > 12;
-    const isModerate = dynamicRange?.crestFactor >= 6 && dynamicRange?.crestFactor <= 12;
-    
-    // === SPECTRAL CHARACTER ===
-    const isDull = spectralCentroid < 1500;
-    const isBright = spectralCentroid > 2500;
-    const isNatural = spectralCentroid >= 1500 && spectralCentroid <= 2500;
-    
-    // === LOUDNESS ===
-    const isQuiet = loudnessLUFS < -30;
-    const isLoud = loudnessLUFS > -10;
-    
-    // ==========================================
-    // ADJUSTMENT RULES (Priority Order)
-    // ==========================================
-    
-    // RULE 1: Vintage Recordings - Handle with care
-    if (isVintage) {
-        adjusted.treble = Math.min(adjusted.treble + 2, 8);
-        adjusted.bass = Math.min(adjusted.bass + 1, 4); // ✅ CAPPED AT 4
-        
-        this.debugLog('📼 Vintage adjustment: +2 treble, +1 bass', 'info');
-    }
-    
-    // RULE 2: Over-Compressed Tracks - Restore perceived dynamics
-    if (isCompressed && !['flat', 'podcast'].includes(presetName)) {
-        adjusted.bass = Math.min(adjusted.bass + 2, 4); // ✅ CAPPED AT 4
-        adjusted.treble = Math.min(adjusted.treble + 2, 8);
-        
-        this.debugLog('🗜️ Compression compensation: +2 bass, +2 treble', 'info');
-    }
-    
-    // RULE 3: High Dynamic Range - Preserve with minimal processing
-    if (isHighDR && presetName !== 'classical') {
-        adjusted.bass *= 0.7;
-        adjusted.mid *= 0.7;
-        adjusted.treble *= 0.7;
-        
-        this.debugLog('🎼 High DR detected: -30% EQ intensity', 'info');
-    }
-    
-    // RULE 4: Frequency Deficiency Correction
-    if (bassDeficiency && presetName !== 'podcast' && presetName !== 'vocal') {
-        adjusted.bass = Math.min(adjusted.bass + 3, 4); // ✅ CAPPED AT 4
-        this.debugLog('📊 Bass deficiency: +3 bass', 'info');
-    }
-    
-    if (trebleDeficiency && !['lofi', 'acoustic'].includes(presetName)) {
-        adjusted.treble = Math.min(adjusted.treble + 3, 8);
-        this.debugLog('✨ Treble deficiency: +3 treble', 'info');
-    }
-    
-    // RULE 5: Frequency Excess Correction
-    if (bassExcess && energy > 0.7) {
-        adjusted.bass = Math.max(adjusted.bass - 2, -2);
-        this.debugLog('🎚️ Bass excess: -2 bass', 'info');
-    }
-    
-    if (midExcess) {
-        adjusted.mid = Math.max(adjusted.mid - 2, -3);
-        this.debugLog('📦 Mid excess: -2 mid', 'info');
-    }
-    
-    // RULE 6: Spectral Character Adjustment
-    if (isDull && presetName !== 'lofi') {
-        adjusted.treble = Math.min(adjusted.treble + 2, 8);
-        this.debugLog('🌑 Dull spectrum: +2 treble', 'info');
-    }
-    
-    if (isBright && energy < 0.4) {
-        adjusted.treble = Math.max(adjusted.treble - 2, 0);
-        this.debugLog('☀️ Overly bright: -2 treble', 'info');
-    }
-    
-    // RULE 7: Vocal Prominence Adjustment
-    if (vocalProminence > 2.0 && presetName !== 'vocal' && presetName !== 'podcast') {
-        adjusted.mid = Math.min(adjusted.mid + 2, 7);
-        this.debugLog('🎤 High vocal prominence: +2 mid', 'info');
-    }
-    
-    // RULE 8: Acousticness - Preserve natural character
-    if (acousticness > 0.7 && !['acoustic', 'classical', 'jazz'].includes(presetName)) {
-        adjusted.bass *= 0.8;
-        adjusted.treble *= 0.8;
-        this.debugLog('🎸 Acoustic character: -20% EQ intensity', 'info');
-    }
-    
-    // RULE 9: Danceability + Low Bass = Need boost
-    if (danceability > 0.7 && bassDeficiency) {
-        adjusted.bass = Math.min(adjusted.bass + 4, 4); // ✅ CAPPED AT 4
-        this.debugLog('💃 High danceability + low bass: +4 bass', 'info');
-    }
-    
-    // RULE 10: Energy-Based Adjustment
-    if (energy > 0.8 && presetName !== 'flat') {
-        adjusted.bass *= 1.2;
-        adjusted.treble *= 1.2;
-        this.debugLog('⚡ High energy: +20% EQ intensity', 'info');
-    } else if (energy < 0.3 && presetName !== 'flat') {
-        adjusted.bass *= 0.7;
-        adjusted.mid *= 0.7;
-        adjusted.treble *= 0.7;
-        this.debugLog('🌙 Low energy: -30% EQ intensity', 'info');
-    }
-    
-    // RULE 11: Mood-Based Fine-Tuning
-    if (mood === 'dark' && !isDull) {
-        adjusted.treble = Math.max(adjusted.treble - 1, 0);
-        this.debugLog('🌑 Dark mood preservation: -1 treble', 'info');
-    }
-    
-    if (mood === 'bright' && isDull) {
-        adjusted.treble = Math.min(adjusted.treble + 3, 8);
-        this.debugLog('☀️ Bright mood enhancement: +3 treble', 'info');
-    }
-    
-    // RULE 12: BPM-Based Adjustment
-    if (bpm > 150 && danceability > 0.6) {
-        adjusted.bass = Math.min(adjusted.bass + 1, 4); // ✅ CAPPED AT 4
-        adjusted.treble = Math.min(adjusted.treble + 1, 8);
-        this.debugLog('🏃 Fast tempo: +1 bass, +1 treble', 'info');
-    }
-    
-    // RULE 13: Quiet Recordings - Boost perceived loudness
-    if (isQuiet && presetName !== 'classical') {
-        adjusted.bass = Math.min(adjusted.bass + 2, 4); // ✅ CAPPED AT 4
-        adjusted.treble = Math.min(adjusted.treble + 2, 8);
-        this.debugLog('🔇 Quiet recording: +2 bass, +2 treble', 'info');
-    }
-    
-    // ✅ FINAL SAFETY CAP - ABSOLUTE MAXIMUM FOR BASS
-    adjusted.bass = Math.min(adjusted.bass, 4);
-    
-    return adjusted;
-}
-    /**
-     * Apply custom EQ values (manual slider control)
+     * Apply arbitrary bass/mid/treble values (manual slider control).
+     * @returns {boolean} true on success
      */
     applyCustom(bass, mid, treble) {
+        const b = this._clamp(bass);
+        const m = this._clamp(mid);
+        const t = this._clamp(treble);
+
         try {
-            const bassGain = this.clampGain(bass);
-            const midGain = this.clampGain(mid);
-            const trebleGain = this.clampGain(treble);
-            
-            this.bassFilter.gain.value = bassGain;
-            this.midFilter.gain.value = midGain;
-            this.trebleFilter.gain.value = trebleGain;
-            
+            this._setGain(this.bassFilter,   b);
+            this._setGain(this.midFilter,    m);
+            this._setGain(this.trebleFilter, t);
             this.currentPreset = 'custom';
             return true;
         } catch (err) {
-            this.debugLog(`❌ Failed to apply custom EQ: ${err.message}`, 'error');
+            this._log(`❌ Failed to apply custom EQ: ${err.message}`, 'error');
             return false;
         }
     }
-    
-    /**
-     * Enable/disable dynamic adjustments
-     */
-    setDynamicAdjustments(enabled) {
-        this.dynamicAdjustmentEnabled = enabled;
-        this.debugLog(`Dynamic EQ adjustments: ${enabled ? 'ON' : 'OFF'}`, 'info');
-    }
-    
-    /**
-     * Clamp gain values to safe range
-     */
-    clampGain(value) {
-        return Math.max(-12, Math.min(12, value));
-    }
-    
-    /**
-     * Update UI sliders
-     */
-    updateUISliders(bass, mid, treble) {
-        const eqBass = document.getElementById('eq-bass');
-        const eqMid = document.getElementById('eq-mid');
-        const eqTreble = document.getElementById('eq-treble');
-        const bassValue = document.getElementById('bass-value');
-        const midValue = document.getElementById('mid-value');
-        const trebleValue = document.getElementById('treble-value');
-        
-        if (eqBass && bassValue) {
-            eqBass.value = bass;
-            bassValue.textContent = `${bass > 0 ? '+' : ''}${bass} dB`;
-        }
-        if (eqMid && midValue) {
-            eqMid.value = mid;
-            midValue.textContent = `${mid > 0 ? '+' : ''}${mid} dB`;
-        }
-        if (eqTreble && trebleValue) {
-            eqTreble.value = treble;
-            trebleValue.textContent = `${treble > 0 ? '+' : ''}${treble} dB`;
-        }
-    }
-    
-    /**
-     * Get current preset name
-     */
+
+    // ─── Public: state queries ────────────────────────────────────────────────
+
     getCurrentPreset() {
         return this.currentPreset;
     }
-    
-    /**
-     * Get current EQ values
-     */
+
     getCurrentValues() {
         return {
-            bass: this.bassFilter.gain.value,
-            mid: this.midFilter.gain.value,
+            bass:   this.bassFilter.gain.value,
+            mid:    this.midFilter.gain.value,
             treble: this.trebleFilter.gain.value,
-            preset: this.currentPreset
+            preset: this.currentPreset,
         };
     }
-    
-    /**
-     * Get list of all presets
-     */
+
     getPresetList() {
-        return Object.entries(this.staticPresets).map(([key, preset]) => ({
-            id: key,
-            name: preset.name,
-            description: preset.description,
-            values: `${preset.bass > 0 ? '+' : ''}${preset.bass} / ${preset.mid > 0 ? '+' : ''}${preset.mid} / ${preset.treble > 0 ? '+' : ''}${preset.treble} dB`,
-            philosophy: preset.philosophy
+        return Object.entries(AudioPresetsManager.PRESETS).map(([id, p]) => ({
+            id,
+            name:        p.name,
+            description: p.description,
+            philosophy:  p.philosophy,
+            values:      `${this._fmt(p.bass)} / ${this._fmt(p.mid)} / ${this._fmt(p.treble)} dB`,
         }));
     }
-    
-    /**
-     * Get detailed preset info
-     */
+
     getPresetInfo(presetName) {
-        const preset = this.staticPresets[presetName];
-        if (!preset) return null;
-        
-        return {
-            name: preset.name,
-            description: preset.description,
-            philosophy: preset.philosophy,
-            bass: preset.bass,
-            mid: preset.mid,
-            treble: preset.treble
-        };
+        const p = AudioPresetsManager.PRESETS[presetName];
+        if (!p) return null;
+        return { name: p.name, description: p.description, philosophy: p.philosophy, bass: p.bass, mid: p.mid, treble: p.treble };
     }
-    
-    /**
-     * Reset to flat
-     */
+
+    // ─── Public: controls ─────────────────────────────────────────────────────
+
     reset() {
         this.applyPreset('flat');
-        this.debugLog('🔄 Reset to flat EQ', 'info');
+        this._log('🔄 Reset to flat EQ', 'info');
     }
-    /**
-     * Load saved preset from localStorage
-     */
+
+    setDynamicAdjustments(enabled) {
+        this.dynamicAdjustmentEnabled = enabled;
+        this._log(`Dynamic EQ adjustments: ${enabled ? 'ON' : 'OFF'}`, 'info');
+    }
+
     loadSavedPreset() {
         try {
-            const savedPreset = localStorage.getItem('eqPreset');
-            if (savedPreset && this.staticPresets[savedPreset]) {
-                this.applyPreset(savedPreset);
-                this.debugLog(`📂 Loaded saved preset: ${savedPreset}`, 'success');
+            const saved = localStorage.getItem('eqPreset');
+            if (saved && AudioPresetsManager.PRESETS[saved]) {
+                this.applyPreset(saved);
+                this._log(`📂 Loaded saved preset: ${saved}`, 'success');
             }
         } catch (err) {
-            this.debugLog(`Failed to load saved preset: ${err.message}`, 'error');
+            this._log(`Failed to load saved preset: ${err.message}`, 'error');
         }
     }
-    
-    /**
-     * Save current preset to localStorage
-     */
+
     saveCurrentPreset() {
         try {
             if (this.currentPreset && this.currentPreset !== 'custom') {
                 localStorage.setItem('eqPreset', this.currentPreset);
             }
         } catch (err) {
-            this.debugLog(`Failed to save preset: ${err.message}`, 'error');
+            this._log(`Failed to save preset: ${err.message}`, 'error');
         }
+    }
+
+    // ─── Internal: gain application ───────────────────────────────────────────
+
+    /**
+     * Smoothly ramp a filter's gain using the same 20 ms time-constant as
+     * AudioPipeline.setGain(). Reads the AudioContext from the AudioNode's own
+     * `.context` property so we don't need to store a separate reference.
+     */
+    _setGain(filter, value) {
+        if (!filter) return;
+        const ctx = filter.context;
+        if (ctx) {
+            filter.gain.setTargetAtTime(value, ctx.currentTime, 0.02);
+        } else {
+            // Fallback for test environments where AudioContext is mocked
+            filter.gain.value = value;
+        }
+    }
+
+    // ─── Internal: dynamic adjustments ───────────────────────────────────────
+
+    _applyDynamicAdjustments(preset, analysis, presetName) {
+        const adjusted = { ...preset };
+
+        const {
+            energy, loudness, loudnessLUFS,
+            dynamicRange, frequencyBands,
+            spectralCentroid, isVintage,
+            vocalProminence, danceability,
+            acousticness, instrumentalness,
+            mood, bpm,
+        } = analysis;
+
+        // ── Derived flags ────────────────────────────────────────────────────
+
+        const bassDeficiency  = frequencyBands?.subBass  < 0.12 && frequencyBands?.bass < 0.18;
+        const trebleDeficiency = frequencyBands?.brilliance < 0.08 && spectralCentroid < 1600;
+        const midExcess        = frequencyBands?.midrange > 0.35;
+        const bassExcess       = (frequencyBands?.subBass + frequencyBands?.bass) > 0.45;
+
+        const isCompressed = dynamicRange?.crestFactor < 6;
+        const isHighDR     = dynamicRange?.crestFactor > 12;
+
+        const isDull   = spectralCentroid < 1500;
+        const isBright = spectralCentroid > 2500;
+
+        const isQuiet  = loudnessLUFS < -30;
+
+        // ── Adjustment rules (in priority order) ─────────────────────────────
+
+        // RULE 1: Vintage recordings — restore frequency extremes
+        if (isVintage) {
+            adjusted.treble = Math.min(adjusted.treble + 2, 8);
+            adjusted.bass   = Math.min(adjusted.bass   + 1, 4);
+            this._log('📼 Vintage: +2 treble, +1 bass', 'info');
+        }
+
+        // RULE 2: Over-compressed — restore perceived dynamics
+        if (isCompressed && !['flat', 'podcast'].includes(presetName)) {
+            adjusted.bass   = Math.min(adjusted.bass   + 2, 4);
+            adjusted.treble = Math.min(adjusted.treble + 2, 8);
+            this._log('🗜️ Compression: +2 bass, +2 treble', 'info');
+        }
+
+        // RULE 3: High dynamic range — preserve with lighter processing
+        if (isHighDR && presetName !== 'classical') {
+            adjusted.bass   *= 0.7;
+            adjusted.mid    *= 0.7;
+            adjusted.treble *= 0.7;
+            this._log('🎼 High DR: −30% EQ intensity', 'info');
+        }
+
+        // RULE 4: Frequency deficiency correction
+        if (bassDeficiency && !['podcast', 'vocal'].includes(presetName)) {
+            adjusted.bass = Math.min(adjusted.bass + 3, 4);
+            this._log('📊 Bass deficiency: +3 bass', 'info');
+        }
+        if (trebleDeficiency && !['lofi', 'acoustic'].includes(presetName)) {
+            adjusted.treble = Math.min(adjusted.treble + 3, 8);
+            this._log('✨ Treble deficiency: +3 treble', 'info');
+        }
+
+        // RULE 5: Frequency excess correction
+        if (bassExcess && energy > 0.7) {
+            adjusted.bass = Math.max(adjusted.bass - 2, -2);
+            this._log('🎚️ Bass excess: −2 bass', 'info');
+        }
+        if (midExcess) {
+            adjusted.mid = Math.max(adjusted.mid - 2, -3);
+            this._log('📦 Mid excess: −2 mid', 'info');
+        }
+
+        // RULE 6: Spectral character
+        if (isDull && presetName !== 'lofi') {
+            adjusted.treble = Math.min(adjusted.treble + 2, 8);
+            this._log('🌑 Dull spectrum: +2 treble', 'info');
+        }
+        if (isBright && energy < 0.4) {
+            adjusted.treble = Math.max(adjusted.treble - 2, 0);
+            this._log('☀️ Overly bright: −2 treble', 'info');
+        }
+
+        // RULE 7: Vocal prominence
+        if (vocalProminence > 2.0 && !['vocal', 'podcast'].includes(presetName)) {
+            adjusted.mid = Math.min(adjusted.mid + 2, 7);
+            this._log('🎤 High vocal prominence: +2 mid', 'info');
+        }
+
+        // RULE 8: Acousticness — preserve natural character
+        if (acousticness > 0.7 && !['acoustic', 'classical', 'jazz'].includes(presetName)) {
+            adjusted.bass   *= 0.8;
+            adjusted.treble *= 0.8;
+            this._log('🎸 Acoustic character: −20% EQ intensity', 'info');
+        }
+
+        // RULE 9: Danceability + bass deficiency
+        if (danceability > 0.7 && bassDeficiency) {
+            adjusted.bass = Math.min(adjusted.bass + 4, 4);
+            this._log('💃 High danceability + low bass: +4 bass', 'info');
+        }
+
+        // RULE 10: Energy-based scaling
+        if (energy > 0.8 && presetName !== 'flat') {
+            adjusted.bass   *= 1.2;
+            adjusted.treble *= 1.2;
+            this._log('⚡ High energy: +20% EQ intensity', 'info');
+        } else if (energy < 0.3 && presetName !== 'flat') {
+            adjusted.bass   *= 0.7;
+            adjusted.mid    *= 0.7;
+            adjusted.treble *= 0.7;
+            this._log('🌙 Low energy: −30% EQ intensity', 'info');
+        }
+
+        // RULE 11: Mood fine-tuning
+        if (mood === 'dark' && !isDull) {
+            adjusted.treble = Math.max(adjusted.treble - 1, 0);
+            this._log('🌑 Dark mood: −1 treble', 'info');
+        }
+        if (mood === 'bright' && isDull) {
+            adjusted.treble = Math.min(adjusted.treble + 3, 8);
+            this._log('☀️ Bright mood: +3 treble', 'info');
+        }
+
+        // RULE 12: Fast tempo + danceability
+        if (bpm > 150 && danceability > 0.6) {
+            adjusted.bass   = Math.min(adjusted.bass   + 1, 4);
+            adjusted.treble = Math.min(adjusted.treble + 1, 8);
+            this._log('🏃 Fast tempo: +1 bass, +1 treble', 'info');
+        }
+
+        // RULE 13: Quiet recordings
+        if (isQuiet && presetName !== 'classical') {
+            adjusted.bass   = Math.min(adjusted.bass   + 2, 4);
+            adjusted.treble = Math.min(adjusted.treble + 2, 8);
+            this._log('🔇 Quiet recording: +2 bass, +2 treble', 'info');
+        }
+
+        // Absolute safety cap for bass
+        adjusted.bass = Math.min(adjusted.bass, 4);
+
+        return adjusted;
+    }
+
+    // ─── Internal: UI sync ────────────────────────────────────────────────────
+
+    /**
+     * Update the EQ slider elements and their value labels.
+     * Values are rounded to 1 decimal place so dynamic float adjustments
+     * (e.g. 4 * 1.2 = 4.800000000001) display cleanly.
+     */
+    _updateUISliders(bass, mid, treble) {
+        const pairs = [
+            ['eq-bass',   'bass-value',   bass  ],
+            ['eq-mid',    'mid-value',    mid   ],
+            ['eq-treble', 'treble-value', treble],
+        ];
+        for (const [sliderId, labelId, value] of pairs) {
+            const slider = document.getElementById(sliderId);
+            const label  = document.getElementById(labelId);
+            const rounded = Math.round(value * 10) / 10; // 1 decimal place
+            if (slider) slider.value = rounded;
+            if (label)  label.textContent = `${this._fmt(rounded)} dB`;
+        }
+    }
+
+    // ─── Internal: utilities ──────────────────────────────────────────────────
+
+    /** Clamp a gain value to the safe ±12 dB range. */
+    _clamp(value) {
+        return Math.max(-12, Math.min(12, value));
+    }
+
+    /**
+     * Format a gain number for display: rounds to 1 decimal, adds leading '+'.
+     * e.g.  4.8 → '+4.8'   -2 → '-2'   0 → '0'
+     */
+    _fmt(value) {
+        const v = Math.round(value * 10) / 10;
+        return `${v > 0 ? '+' : ''}${v}`;
     }
 }
 
 window.AudioPresetsManager = AudioPresetsManager;
+console.log('✅ AudioPresetsManager v1.1 loaded');
