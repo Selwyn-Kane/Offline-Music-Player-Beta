@@ -26,6 +26,9 @@ window.reconnectAudioChainWithVolumeControl = function () {
             window.volumeGainNode,    window.volumeCompressor,
             window.volumeMakeupGain,
         ];
+        // Splice in crossfade fade-gain node when CrossfadeManager has created it.
+        if (window.crossfadeFadeGain) nodes.push(window.crossfadeFadeGain);
+
         nodes.forEach(n => { try { n.disconnect(); } catch (_) {} });
         for (let i = 0; i < nodes.length - 1; i++) nodes[i].connect(nodes[i + 1]);
         nodes[nodes.length - 1].connect(window.audioContext.destination);
@@ -355,6 +358,9 @@ class MusicPlayerApp {
 
             if (typeof CrossfadeManager !== 'undefined') {
                 this.managers.crossfade = new CrossfadeManager(this.elements.player, this.debugLog.bind(this));
+                // Pre-create the gain node so it is available when VolumeControl
+                // calls reconnectAudioChainWithVolumeControl().
+                this.managers.crossfade.initNodes();
             }
 
             if (window.backgroundAudioHandler) this._initBackgroundAudio();
@@ -1039,6 +1045,9 @@ class MusicPlayerApp {
     async loadTrack(index) {
         if (index < 0 || index >= this.state.playlist.length) return;
 
+        // Cancel any in-progress crossfade so manual track changes are instant.
+        this.managers.crossfade?.cancelFade();
+
         this._cleanupCurrentTrack();
         this.managers.performance?.cleanupForTrackChange();
 
@@ -1445,6 +1454,7 @@ class MusicPlayerApp {
     clearPlaylist() {
         if (!confirm('Clear playlist?')) return;
 
+        this.managers.crossfade?.cancelFade();
         this._rafStop();
         this.managers.fileLoading?.cleanupPlaylist(this.state.playlist);
         this.managers.audioBuffer?.clearAllBuffers();
@@ -1477,6 +1487,8 @@ class MusicPlayerApp {
         if (!this.elements.durationDisplay || !this.elements.player) return;
         const dur = this.elements.player.duration;
         this.elements.durationDisplay.textContent = isFinite(dur) ? this.formatTime(dur) : '0:00';
+        // Now that player.duration is available, schedule the crossfade point.
+        this._startCrossfadeMonitoring();
     }
 
     _handlePlay() {
@@ -1509,6 +1521,133 @@ class MusicPlayerApp {
             this.elements.player,
             this.state.playlist[this.state.currentTrackIndex]
         );
+    }
+
+    // ─── Crossfade helpers ────────────────────────────────────────────────────────
+
+    /**
+     * Returns the playlist index of the next track based on the current
+     * shuffle/loop state, or -1 when there is no next track.
+     */
+    _nextTrackIndex() {
+        const { playlist, currentTrackIndex, isShuffled, shuffledPlaylist, loopMode } = this.state;
+        if (playlist.length === 0) return -1;
+
+        if (isShuffled && shuffledPlaylist.length > 0) {
+            const pos = shuffledPlaylist.indexOf(currentTrackIndex);
+            const nxt = pos + 1;
+            if (nxt >= shuffledPlaylist.length) {
+                return loopMode === 'all' ? shuffledPlaylist[0] : -1;
+            }
+            return shuffledPlaylist[nxt];
+        }
+
+        const next = currentTrackIndex + 1;
+        if (next >= playlist.length) {
+            return loopMode === 'all' ? 0 : -1;
+        }
+        return next;
+    }
+
+    /**
+     * Wire CrossfadeManager.startMonitoring() for the current track.
+     * Called from _handleMetadataLoaded() once player.duration is available.
+     * Silently exits when crossfade/gapless are both disabled or no next track exists.
+     */
+    _startCrossfadeMonitoring() {
+        const cf = this.managers.crossfade;
+        if (!cf) return;
+        if (!cf.enabled && !cf.gaplessEnabled) return;
+        if (this.state.currentTrackIndex === -1) return;
+
+        const nextIdx = this._nextTrackIndex();
+        if (nextIdx === -1) return;
+
+        const currentTrack = this.state.playlist[this.state.currentTrackIndex];
+        const nextTrack    = this.state.playlist[nextIdx];
+
+        cf.startMonitoring(
+            this.elements.player,
+            currentTrack,
+            nextTrack,
+            (payload) => this._loadTrackViaCrossfade(nextIdx, payload),
+        );
+    }
+
+    /**
+     * Loads a track as initiated by the CrossfadeManager callback.
+     *
+     * Deliberately skips cancelFade() and _cleanupCurrentTrack() so the
+     * fade-out in progress continues uninterrupted. Everything else mirrors
+     * loadTrack() to keep the UI fully consistent.
+     *
+     * @param {number} index   - Playlist index of the track to load.
+     * @param {object} payload - { track, startTime, preloadedURL } from CrossfadeManager
+     */
+    _loadTrackViaCrossfade(index, { startTime = 0, preloadedURL = null } = {}) {
+        if (index < 0 || index >= this.state.playlist.length) return;
+
+        this.managers.performance?.cleanupForTrackChange();
+
+        this.state.currentTrackIndex = index;
+        this.managers.audioBuffer?.setCurrentIndex(index);
+        const track = this.state.playlist[index];
+
+        this.debugLog(`Crossfade switching to track ${index + 1}: ${track.fileName}`, 'info');
+
+        if (track.metadata) {
+            this._displayMetadata(track.metadata);
+        } else {
+            this._clearMetadata();
+            if (this.elements.trackTitle) this.elements.trackTitle.textContent = track.fileName;
+        }
+
+        if (this.managers.volume && track.metadata) {
+            const id = `${track.metadata.artist || 'Unknown'}_${track.metadata.title || track.fileName}`;
+            if (!this.managers.volume.applyTrackVolume(id) && track.analysis) {
+                this.managers.volume.applyVolume(this.managers.volume.getVolume(), true, track.analysis);
+            }
+        }
+        if (this.managers.autoEQ?.isEnabled() && track.analysis) {
+            this.managers.autoEQ.applyAutoEQ(track);
+        }
+
+        // Resolve audio source: prefer preloaded blob URL, then fall back
+        const player = this.elements.player;
+        let src = preloadedURL;
+        if (!src) {
+            if (track.file) {
+                src = URL.createObjectURL(track.file);
+                this.resources.blobURLs.add(src);
+            } else if (track.audioURL) {
+                src = track.audioURL;
+            }
+        }
+
+        if (src) {
+            player.src = src;
+            player.load();
+            if (startTime > 0) {
+                try { player.currentTime = startTime; } catch (_) {}
+            }
+            player.play().catch(e => this.debugLog(`Crossfade playback failed: ${e.message}`, 'warning'));
+        } else {
+            this.debugLog('No audio source for crossfade target track', 'error');
+        }
+
+        // Lyrics
+        if (track.vtt && this.managers.vtt && this.managers.lyrics) {
+            this.managers.vtt.loadVTTFile(track.vtt)
+                .then(cues => this.managers.lyrics.loadLyrics(cues))
+                .catch(() => this.managers.lyrics?.clearLyrics());
+        } else {
+            this.managers.lyrics?.clearLyrics();
+        }
+
+        this.managers.playlistRenderer?.updateHighlight(index);
+        if (this.elements.prevButton) this.elements.prevButton.disabled = false;
+        if (this.elements.nextButton) this.elements.nextButton.disabled = false;
+        this._updateMediaSession();
     }
 
     // ═══════════════════════════════════════════════════════════

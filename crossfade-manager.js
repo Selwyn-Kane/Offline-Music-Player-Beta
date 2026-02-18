@@ -58,6 +58,15 @@ class CrossfadeManager {
 
     // ─── Node initialisation ──────────────────────────────────────────────────
 
+    /**
+     * Public entry point: create the fade GainNode and expose it on window so
+     * reconnectAudioChainWithVolumeControl() can splice it into the chain.
+     * Safe to call multiple times (no-op after first success).
+     */
+    initNodes() {
+        return this._initNodes();
+    }
+
     _initNodes() {
         if (this._nodesReady || !this._ctx) return false;
         try {

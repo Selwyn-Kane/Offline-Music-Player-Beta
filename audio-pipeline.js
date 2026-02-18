@@ -162,6 +162,7 @@ class AudioPipeline {
                 window.volumeGainNode,
                 window.volumeCompressor,
                 window.volumeMakeupGain,
+                window.crossfadeFadeGain,
             ];
             if (this._analyserConnected) toDisconnect.push(this.analyser);
 
@@ -183,6 +184,14 @@ class AudioPipeline {
                 vc.gain.connect(vc.compressor);
                 vc.compressor.connect(vc.makeup);
                 tail = vc.makeup;
+            }
+
+            // Splice in crossfade fade-gain node if CrossfadeManager has created it.
+            // Placing it here (after EQ + volume, before analyser) means the
+            // visualiser also fades, matching the intended UX.
+            if (window.crossfadeFadeGain) {
+                tail.connect(window.crossfadeFadeGain);
+                tail = window.crossfadeFadeGain;
             }
 
             // Analyser → destination
