@@ -23,6 +23,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
       # ── 3. Install all npm dependencies (Capacitor + plugins) ─────────────
       - name: Install dependencies
@@ -39,17 +40,36 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # ── 6. Generate the Android project from your web app ─────────────────
+      # ── 6. Bundle web assets into the www/ folder Capacitor expects ──────────
+      #    webDir is set to "www" in capacitor.config.json.
+      #    We copy everything except build/config files that don't belong in the app.
+      - name: Create www folder with web assets
+        run: |
+          mkdir -p www
+          rsync -a \
+            --exclude='www' \
+            --exclude='node_modules' \
+            --exclude='android' \
+            --exclude='.github' \
+            --exclude='package.json' \
+            --exclude='package-lock.json' \
+            --exclude='capacitor.config.json' \
+            --exclude='.gitignore' \
+            --exclude='SETUP.md' \
+            --exclude='*.bak' \
+            . www/
+
+      # ── 7. Generate the Android project from your web app ─────────────────
       #    This is what "npx cap add android" does locally.
       #    It creates the android/ folder containing the full Gradle project.
       - name: Add Android platform
         run: npx cap add android
 
-      # ── 7. Copy web assets + apply plugin config into the Android project ──
+      # ── 8. Copy web assets + apply plugin config into the Android project ──
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # ── 8. Inject Android permissions into the manifest ───────────────────
+      # ── 9. Inject Android permissions into the manifest ───────────────────
       #    Capacitor plugins add most permissions automatically, but we
       #    explicitly add the ones our bridge needs to guarantee they're present.
       - name: Patch AndroidManifest.xml with required permissions
