@@ -1,10 +1,13 @@
 // Enhanced PWA registration with GitHub Pages support
 if ('serviceWorker' in navigator) {
   const isExtension = window.location.protocol === 'chrome-extension:';
-  
-  if (isExtension) {
-    console.log('⏭️ Skipping service worker registration (extension mode)');
-    
+  // Inside the Capacitor WebView the app IS the offline asset — no SW needed.
+  const isCapacitor = !!(window.Capacitor?.isNativePlatform?.());
+
+  if (isExtension || isCapacitor) {
+    console.log('⏭️ Skipping service worker registration (extension/native mode)');
+
+    // Still request persistent storage — IndexedDB benefits from it in all environments
     if (navigator.storage && navigator.storage.persist) {
       navigator.storage.persist().then(granted => {
         console.log(`💾 Persistent storage: ${granted ? 'granted' : 'denied'}`);

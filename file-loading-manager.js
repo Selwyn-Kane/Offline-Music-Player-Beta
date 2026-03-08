@@ -170,8 +170,15 @@ class EnhancedFileLoadingManager {
         }
     }
 
-    /** Prompt the user to pick files via a hidden <input>. */
+    /** Prompt the user to pick files. On Android routes through the native media picker. */
     createFileInput(options = {}) {
+        // Native Android path — use the Capacitor file picker plugin
+        // which opens the system media browser (Music library, Downloads, etc.)
+        if (window.NativeBridge?.isNative()) {
+            return this._nativeFilePick(options);
+        }
+
+        // Browser path — existing hidden <input type="file"> logic unchanged
         return new Promise((resolve, reject) => {
             const input    = document.createElement('input');
             input.type     = 'file';
@@ -201,6 +208,48 @@ class EnhancedFileLoadingManager {
 
             setTimeout(() => input.click(), 100);
         });
+    }
+
+    /**
+     * Native Android file pick via the Capacitor FilePicker plugin.
+     * Converts each Capacitor file descriptor into a standard Web File object
+     * so the rest of the processing pipeline (metadata parser, chunking, etc.)
+     * is completely unchanged.
+     */
+    async _nativeFilePick(options = {}) {
+        // NativeBridge.pickAudioFiles() throws AbortError if the user cancels
+        const descriptors = await window.NativeBridge.pickAudioFiles();
+
+        if (!descriptors || descriptors.length === 0) {
+            const err  = new Error('No files selected');
+            err.name   = 'AbortError';
+            throw err;
+        }
+
+        this._log(`📱 Native picker returned ${descriptors.length} file(s)`, 'info');
+
+        // Convert Capacitor file descriptors → Web File objects.
+        // Capacitor gives us { name, mimeType, path/uri, size }.
+        // We read the binary data via the Filesystem plugin and wrap in a File.
+        const fileObjects = await Promise.all(descriptors.map(async (desc) => {
+            try {
+                const blob = await window.NativeBridge.readFileAsBlob(
+                    desc.path ?? desc.uri,
+                    desc.mimeType ?? 'audio/mpeg'
+                );
+                return new File([blob], desc.name, { type: desc.mimeType ?? 'audio/mpeg' });
+            } catch (err) {
+                this._log(`⚠️ Could not read native file "${desc.name}": ${err.message}`, 'warning');
+                return null;
+            }
+        }));
+
+        const valid = fileObjects.filter(Boolean);
+        if (valid.length === 0) {
+            throw new Error('No files could be read from device storage');
+        }
+
+        return this.loadFiles(valid);
     }
 
     // ─── Progressive loading ──────────────────────────────────────────────────

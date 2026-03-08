@@ -840,7 +840,11 @@ class MusicPlayerApp {
         this._setupEqualizer();
 
         // Hide folder button on unsupported browsers
-        if (this.elements.folderButton && !('showDirectoryPicker' in window)) {
+        // Hide folder button only when neither the native bridge nor the
+        // directory picker API is available (e.g. Firefox desktop, old Safari)
+        if (this.elements.folderButton &&
+            !window.NativeBridge?.isNative() &&
+            !('showDirectoryPicker' in window)) {
             this.elements.folderButton.style.display = 'none';
         }
 
@@ -982,6 +986,44 @@ class MusicPlayerApp {
     }
 
     async loadFromFolder(existingHandle = null) {
+        // ── Native Android path ──────────────────────────────────────────────
+        // showDirectoryPicker doesn't exist in WebView. Instead, check the
+        // Android media permission, then open the native file picker via
+        // FileLoadingManager (which routes through NativeBridge.pickAudioFiles).
+        if (window.NativeBridge?.isNative()) {
+            try {
+                const permState = await window.NativeBridge.checkMediaPermission();
+
+                if (permState === 'denied') {
+                    this.managers.ui?.showToast(
+                        'Music access is denied. Enable it in Android Settings → App Permissions.',
+                        'error'
+                    );
+                    return;
+                }
+
+                if (permState !== 'granted') {
+                    const granted = await window.NativeBridge.requestMediaPermission();
+                    if (!granted) {
+                        this.managers.ui?.showToast(
+                            'Music access is required to load songs.',
+                            'warning'
+                        );
+                        return;
+                    }
+                }
+
+                // Permission is granted — open native media picker
+                return this.loadFiles();
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    this.debugLog(`Error in native loadFromFolder: ${err.message}`, 'error');
+                }
+            }
+            return;
+        }
+
+        // ── Browser path (unchanged) ─────────────────────────────────────────
         try {
             let dir = existingHandle;
             if (!dir) {

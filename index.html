@@ -14,6 +14,11 @@
     <link rel="shortcut icon" href="icon-192.png">
     <link rel="apple-touch-icon" href="icon-192.png">
     
+    <!-- Capacitor runtime (injected by WebView on Android; gracefully absent on web) -->
+    <script src="capacitor.js"></script>
+    <!-- Native bridge — must load before all other app scripts -->
+    <script src="android-bridge.js"></script>
+
     <script src="gh-pages-config.js"></script>
     <script src="chromeOS-detector.js"></script>
     <script src="ui-manager.js"></script>

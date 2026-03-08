@@ -1,0 +1,19 @@
+{
+  "appId": "com.ultimateoffline.musicplayer",
+  "appName": "Music Player",
+  "webDir": ".",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": false,
+    "minWebViewVersion": 60
+  },
+  "plugins": {
+    "FilePicker": {
+      "ios": {}
+    }
+  }
+}

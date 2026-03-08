@@ -255,6 +255,37 @@ class FolderPersistence {
     // ─── Folder handle ────────────────────────────────────────────────────────
 
     async saveFolderHandle(handle, options = {}) {
+        // FileSystemDirectoryHandle cannot be serialized inside the Capacitor WebView.
+        // On native we persist the metadata (for stats/history) but not the handle itself.
+        if (window.NativeBridge?.isNative()) {
+            try {
+                await this._ensureReady();
+                const folderName = options.folderName ?? handle?.name ?? 'Music';
+                const meta = {
+                    id:           'musicFolder',
+                    folderName,
+                    lastAccessed: Date.now(),
+                    savedAt:      Date.now(),
+                    trackCount:   options.trackCount  ?? 0,
+                    hasLyrics:    options.hasLyrics   ?? false,
+                    hasAnalysis:  options.hasAnalysis ?? false,
+                    totalSize:    options.totalSize   ?? 0,
+                };
+                await Promise.all([
+                    this._put(FolderPersistence.META, meta),
+                    this._addToHistory(folderName, meta),
+                ]);
+                this._saveToLocalStorage(folderName);
+                this._cache.metadata  = meta;
+                this._cache.updatedAt = Date.now();
+                this._log(`✅ Folder metadata saved (native mode)`, 'success');
+                return { success: true, metadata: meta };
+            } catch (err) {
+                this._log(`❌ saveFolderHandle (native) failed: ${err.message}`, 'error');
+                return { success: false, error: err.message };
+            }
+        }
+
         try {
             await this._ensureReady();
 
@@ -288,6 +319,9 @@ class FolderPersistence {
     }
 
     async loadFolderHandle() {
+        // No FileSystemDirectoryHandle to restore on native — user picks files fresh each session.
+        if (window.NativeBridge?.isNative()) return null;
+
         try {
             await this._ensureReady();
 
@@ -461,6 +495,9 @@ class FolderPersistence {
     // ─── Permission helpers ───────────────────────────────────────────────────
 
     async verifyFolderPermission(handle) {
+        // On native, file access is granted by the user through the OS picker.
+        if (window.NativeBridge?.isNative()) return { granted: true };
+
         try {
             const state = await handle.queryPermission({ mode: 'read' });
             if (state === 'granted') {
@@ -481,6 +518,9 @@ class FolderPersistence {
     }
 
     async requestFolderPermission(handle) {
+        // On native, permissions are handled by NativeBridge.requestMediaPermission().
+        if (window.NativeBridge?.isNative()) return { granted: true };
+
         try {
             const state = await handle.requestPermission({ mode: 'read' });
             return { granted: state === 'granted', requested: true };

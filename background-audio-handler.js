@@ -283,6 +283,28 @@ class EnhancedBackgroundAudioHandler {
     // ─── Wake Lock ────────────────────────────────────────────────────────────
 
     async _setupWakeLock() {
+        // On Android, delegate to the native KeepAwake Capacitor plugin —
+        // more reliable than the WakeLock API when the app is backgrounded.
+        if (window.NativeBridge?.isNative()) {
+            const onPlay  = () => window.NativeBridge.keepScreenOn(true).catch(() => {});
+            const onPause = () => window.NativeBridge.keepScreenOn(false).catch(() => {});
+            const onEnded = () => window.NativeBridge.keepScreenOn(false).catch(() => {});
+
+            this.player.addEventListener('play',  onPlay);
+            this.player.addEventListener('pause', onPause);
+            this.player.addEventListener('ended', onEnded);
+
+            this._listeners.push(
+                { element: this.player, event: 'play',  handler: onPlay  },
+                { element: this.player, event: 'pause', handler: onPause },
+                { element: this.player, event: 'ended', handler: onEnded },
+            );
+
+            this._log('✅ WakeLock: using native KeepAwake plugin', 'info');
+            return true;
+        }
+
+        // Browser WakeLock API fallback (desktop Chrome, Edge, etc.)
         if (!('wakeLock' in navigator)) return false;
 
         const request = async () => {
@@ -328,6 +350,12 @@ class EnhancedBackgroundAudioHandler {
     // ─── Service Worker ───────────────────────────────────────────────────────
 
     async _registerServiceWorker() {
+        // Inside the Capacitor WebView the files are bundled as assets —
+        // there is nothing to cache and no SW scope to register.
+        if (window.NativeBridge?.isNative()) {
+            this._log('⏭️ Service worker skipped (native mode)', 'info');
+            return false;
+        }
         if (!('serviceWorker' in navigator)) return false;
 
         try {
