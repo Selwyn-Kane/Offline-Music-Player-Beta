@@ -211,45 +211,139 @@ class EnhancedFileLoadingManager {
     }
 
     /**
-     * Native Android file pick via the Capacitor FilePicker plugin.
-     * Converts each Capacitor file descriptor into a standard Web File object
-     * so the rest of the processing pipeline (metadata parser, chunking, etc.)
-     * is completely unchanged.
+     * Load from an array of NativeFileBrowser descriptors (scan results).
+     * Reads binary data ONE BATCH AT A TIME so RAM never spikes — this is
+     * the fix for the crash-on-many-files bug.
+     *
+     * Each descriptor: { name, path, uri, size, mimeType, title?, artist?, album?, duration? }
      */
-    async _nativeFilePick(options = {}) {
-        // NativeBridge.pickAudioFiles() throws AbortError if the user cancels
-        const descriptors = await window.NativeBridge.pickAudioFiles();
-
-        if (!descriptors || descriptors.length === 0) {
-            const err  = new Error('No files selected');
-            err.name   = 'AbortError';
+    async loadFromNativeDescriptors(descriptors) {
+        if (!descriptors?.length) {
+            const err = new Error('No files selected');
+            err.name  = 'AbortError';
             throw err;
         }
 
-        this._log(`📱 Native picker returned ${descriptors.length} file(s)`, 'info');
+        this._log(`📱 Loading ${descriptors.length} native track(s) in batches`, 'info');
 
-        // Convert Capacitor file descriptors → Web File objects.
-        // Capacitor gives us { name, mimeType, path/uri, size }.
-        // We read the binary data via the Filesystem plugin and wrap in a File.
-        const fileObjects = await Promise.all(descriptors.map(async (desc) => {
-            try {
-                const blob = await window.NativeBridge.readFileAsBlob(
-                    desc.path ?? desc.uri,
-                    desc.mimeType ?? 'audio/mpeg'
-                );
-                return new File([blob], desc.name, { type: desc.mimeType ?? 'audio/mpeg' });
-            } catch (err) {
-                this._log(`⚠️ Could not read native file "${desc.name}": ${err.message}`, 'warning');
-                return null;
-            }
-        }));
-
-        const valid = fileObjects.filter(Boolean);
-        if (valid.length === 0) {
-            throw new Error('No files could be read from device storage');
+        if (this.state.isLoading) {
+            this._log('⚠️ Load already in progress', 'warning');
+            return { success: false, error: 'Loading already in progress' };
         }
 
-        return this.loadFiles(valid);
+        this.state.isLoading      = true;
+        this.state.processedFiles = 0;
+        this.state.totalFiles     = descriptors.length;
+        this.state.errors         = [];
+        this.state.warnings       = [];
+
+        const startTime = Date.now();
+        this._notify('onLoadStart', descriptors.length);
+
+        const playlist = [];
+
+        try {
+            // Use the mobile chunk size (3) so we hold only a few audio blobs in memory at once.
+            const chunks = this._chunkArray(descriptors, this.config.chunkSize);
+
+            for (let ci = 0; ci < chunks.length; ci++) {
+                const batch = chunks[ci];
+
+                for (let i = 0; i < batch.length; i++) {
+                    const desc  = batch[i];
+                    const index = ci * this.config.chunkSize + i;
+
+                    try {
+                        const track = await this._processNativeDescriptor(desc, index, descriptors.length);
+                        playlist.push(track);
+                    } catch (err) {
+                        this._log(`⚠️ Skipped "${desc.name}": ${err.message}`, 'warning');
+                        this.state.errors.push({ file: desc.name, error: err.message });
+                    }
+
+                    this._notify('onChunkComplete', {
+                        chunk:     ci + 1,
+                        total:     chunks.length,
+                        processed: index + 1,
+                        playlist,
+                    });
+                }
+
+                // Yield to the browser between batches so the UI stays responsive
+                await this._delay(0);
+            }
+
+            const loadTime = Date.now() - startTime;
+            this._log(`✅ Loaded ${playlist.length} native tracks in ${(loadTime / 1000).toFixed(2)} s`, 'success');
+            this._notify('onLoadComplete', playlist);
+
+            return { success: true, playlist, loadTime, errors: this.state.errors };
+
+        } catch (err) {
+            this._log(`❌ Native load error: ${err.message}`, 'error');
+            this._notify('onLoadError', err);
+            return { success: false, playlist: [], error: err.message, errors: this.state.errors };
+
+        } finally {
+            this.state.isLoading = false;
+        }
+    }
+
+    async _processNativeDescriptor(desc, index, total) {
+        // Read binary data for just this one file — small, bounded memory cost
+        const blob = await window.NativeBridge.readFileAsBlob(
+            desc.path ?? desc.uri,
+            desc.mimeType ?? 'audio/mpeg'
+        );
+        const file = new File([blob], desc.name, { type: desc.mimeType ?? 'audio/mpeg' });
+
+        // Extract metadata; fall back to what the scan already provided
+        let metadata;
+        try {
+            metadata = await this._extractMetadata(file);
+        } catch {
+            metadata = {
+                title:       desc.title  || this._getBaseName(desc.name),
+                artist:      desc.artist || 'Unknown Artist',
+                album:       desc.album  || 'Unknown Album',
+                image:       null,
+                hasMetadata: false,
+            };
+        }
+
+        const duration = desc.duration ?? await this._getAudioDuration(file);
+
+        this._updateProgress(index + 1, total, desc.name);
+        this._notify('onFileProcessed', { fileName: desc.name });
+
+        return {
+            audioURL:        URL.createObjectURL(file),
+            fileName:        desc.name,
+            fileSize:        desc.size ?? file.size,
+            file,
+            vtt:             null,
+            metadata,
+            duration,
+            analysis:        null,
+            hasDeepAnalysis: false,
+            loadedAt:        Date.now(),
+        };
+    }
+
+    /**
+     * Legacy fallback — only reached if somehow called on a native build
+     * without going through NativeFileBrowser first.
+     */
+    async _nativeFilePick(options = {}) {
+        const descriptors = await window.NativeBridge.pickAudioFiles();
+
+        if (!descriptors || descriptors.length === 0) {
+            const err = new Error('No files selected');
+            err.name  = 'AbortError';
+            throw err;
+        }
+
+        return this.loadFromNativeDescriptors(descriptors);
     }
 
     // ─── Progressive loading ──────────────────────────────────────────────────

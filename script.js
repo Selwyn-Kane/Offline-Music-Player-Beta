@@ -977,6 +977,15 @@ class MusicPlayerApp {
             this.managers.ui?.showToast('File loading not available', 'error');
             return;
         }
+
+        // ── Native Android path ──────────────────────────────────────────────
+        // Use the library browser instead of the system file picker so the user
+        // can select individual songs without loading everything into RAM at once.
+        if (window.NativeBridge?.isNative()) {
+            return this._nativeBrowseAndLoad();
+        }
+
+        // ── Browser path (unchanged) ─────────────────────────────────────────
         try {
             const result = await this.managers.fileLoading.createFileInput();
             if (result?.success && result.playlist.length > 0) this._applyNewPlaylist(result.playlist);
@@ -987,40 +996,10 @@ class MusicPlayerApp {
 
     async loadFromFolder(existingHandle = null) {
         // ── Native Android path ──────────────────────────────────────────────
-        // showDirectoryPicker doesn't exist in WebView. Instead, check the
-        // Android media permission, then open the native file picker via
-        // FileLoadingManager (which routes through NativeBridge.pickAudioFiles).
+        // showDirectoryPicker doesn't exist in WebView. Route through the
+        // library browser instead — same permission check, no file picker crash.
         if (window.NativeBridge?.isNative()) {
-            try {
-                const permState = await window.NativeBridge.checkMediaPermission();
-
-                if (permState === 'denied') {
-                    this.managers.ui?.showToast(
-                        'Music access is denied. Enable it in Android Settings → App Permissions.',
-                        'error'
-                    );
-                    return;
-                }
-
-                if (permState !== 'granted') {
-                    const granted = await window.NativeBridge.requestMediaPermission();
-                    if (!granted) {
-                        this.managers.ui?.showToast(
-                            'Music access is required to load songs.',
-                            'warning'
-                        );
-                        return;
-                    }
-                }
-
-                // Permission is granted — open native media picker
-                return this.loadFiles();
-            } catch (err) {
-                if (err.name !== 'AbortError') {
-                    this.debugLog(`Error in native loadFromFolder: ${err.message}`, 'error');
-                }
-            }
-            return;
+            return this._nativeBrowseAndLoad();
         }
 
         // ── Browser path (unchanged) ─────────────────────────────────────────
@@ -1053,6 +1032,63 @@ class MusicPlayerApp {
             }
         } catch (err) {
             if (err.name !== 'AbortError') this.debugLog(`Error loading folder: ${err.message}`, 'error');
+        }
+    }
+
+    /**
+     * Shared native-only flow used by both loadFiles() and loadFromFolder().
+     * 1. Checks / requests the media permission.
+     * 2. Opens the NativeFileBrowser so the user can pick individual songs.
+     * 3. Passes only the selected descriptors to loadFromNativeDescriptors()
+     *    which reads binary data in small batches — never all at once.
+     */
+    async _nativeBrowseAndLoad() {
+        if (!this.managers.fileLoading) {
+            this.managers.ui?.showToast('File loading not available', 'error');
+            return;
+        }
+
+        try {
+            // ── 1. Permission ────────────────────────────────────────────────
+            const permState = await window.NativeBridge.checkMediaPermission();
+
+            if (permState === 'denied') {
+                this.managers.ui?.showToast(
+                    'Music access is denied. Enable it in Android Settings → App Permissions.',
+                    'error'
+                );
+                return;
+            }
+
+            if (permState !== 'granted') {
+                const granted = await window.NativeBridge.requestMediaPermission();
+                if (!granted) {
+                    this.managers.ui?.showToast('Music access is required to load songs.', 'warning');
+                    return;
+                }
+            }
+
+            // ── 2. Open the library browser ──────────────────────────────────
+            if (typeof NativeFileBrowser === 'undefined') {
+                this.debugLog('NativeFileBrowser not loaded — falling back to file picker', 'warning');
+                return this.managers.fileLoading.createFileInput();
+            }
+
+            const browser     = new NativeFileBrowser(this.debugLog.bind(this));
+            const descriptors = await browser.open();   // rejects with AbortError on cancel
+
+            if (!descriptors?.length) return;
+
+            // ── 3. Load selected files in batches ────────────────────────────
+            const result = await this.managers.fileLoading.loadFromNativeDescriptors(descriptors);
+            if (result?.success && result.playlist.length > 0) {
+                this._applyNewPlaylist(result.playlist);
+            }
+
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                this.debugLog(`Native browse error: ${err.message}`, 'error');
+            }
         }
     }
 
