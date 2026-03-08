@@ -169,14 +169,9 @@ class LyricsManager {
         }
         if (searchClose) this._wire(searchClose, 'click', () => this.toggleSearch());
 
-        // Fullscreen toggle
-        if (this.elements.fullscreenToggle) {
-            this._wire(this.elements.fullscreenToggle, 'click', () =>
-                this.toggleFullscreen(!this.state.fullscreen)
-            );
-        }
-
         // Fullscreen navigation / close
+        // NOTE: The toggle button click listener is registered by script.js
+        // (_setupFullscreenLyricsToggle) to avoid a duplicate listener conflict.
         const fs = (id) => elements[id] || document.getElementById(id);
         if (elements.fullscreenCloseBtn)
             this._wire(elements.fullscreenCloseBtn, 'click', () => this.toggleFullscreen(false));

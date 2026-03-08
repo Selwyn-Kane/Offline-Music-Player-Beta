@@ -1397,6 +1397,16 @@ button.loop-one {
 }
 
 /* Fullscreen Lyrics */
+/* Pull the background canvas out of the flex flow so the lyrics content stays centered */
+#fullscreen-lyrics-viz-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    pointer-events: none;
+}
+
 #fullscreen-lyrics {
     position: fixed;
     inset: 0;

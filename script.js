@@ -503,10 +503,11 @@ class MusicPlayerApp {
             this._renderProgress();
         }
 
-        if (this.managers.lyrics && this.state.compactMode === 'full' &&
+        if (this.managers.lyrics &&
+            (this.state.compactMode === 'full' || this.managers.lyrics.isFullscreenActive()) &&
             ts - this._raf.lastLyrics >= 100) {
             this._raf.lastLyrics = ts;
-            this.managers.lyrics.update(this.elements.player.currentTime, 'full');
+            this.managers.lyrics.update(this.elements.player.currentTime, this.state.compactMode);
         }
 
         this._raf.id = requestAnimationFrame(this._boundRafTick);
@@ -742,33 +743,20 @@ class MusicPlayerApp {
 
     _setupFullscreenLyricsToggle() {
         const toggle = this.elements.fsLyricsToggle;
-        const panel  = this.elements.fsLyricsContainer;
-        if (!toggle || !panel || !this.managers.lyrics) return;
+        if (!toggle || !this.managers.lyrics) return;
 
-        const openPanel = () => {
-            panel.classList.remove('fullscreen-lyrics-hidden');
-            panel.classList.add('show');
-            if (this.state.compactMode !== 'full') {
-                this.managers.lyrics._wasAutoSyncDisabled = !this.managers.lyrics.autoSync;
-                this.managers.lyrics.enableAutoSync?.();
-            }
-        };
+        // Single listener — LyricsManager owns all panel state; delegate entirely to it.
+        // This prevents the double-listener race where script.js and LyricsManager each
+        // registered a handler that fired in opposite directions on the same click.
+        this._wire(toggle, 'click', () => {
+            this.managers.lyrics.toggleFullscreen(!this.managers.lyrics.isFullscreenActive());
+        });
 
-        const closePanel = () => {
-            panel.classList.add('fullscreen-lyrics-hidden');
-            panel.classList.remove('show');
-            if (this.state.compactMode !== 'full' && this.managers.lyrics._wasAutoSyncDisabled) {
-                this.managers.lyrics.disableAutoSync?.();
-                delete this.managers.lyrics._wasAutoSyncDisabled;
-            }
-        };
-
-        const togglePanel = () => {
-            panel.classList.contains('fullscreen-lyrics-hidden') ? openPanel() : closePanel();
-        };
-
-        this._wire(toggle, 'click', togglePanel);
-        if (this.elements.fsLyricsClose) this._wire(this.elements.fsLyricsClose, 'click', closePanel);
+        if (this.elements.fsLyricsClose) {
+            this._wire(this.elements.fsLyricsClose, 'click', () => {
+                this.managers.lyrics.toggleFullscreen(false);
+            });
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
@@ -788,7 +776,7 @@ class MusicPlayerApp {
                 case 'm':           e.preventDefault(); this.managers.volume?.toggleMute(); break;
                 case 's':           e.preventDefault(); this.toggleShuffle(); break;
                 case 'l':           e.preventDefault(); this.cycleLoopMode(); break;
-                case 'f':           if (this.managers.lyrics) { e.preventDefault(); this.managers.lyrics.toggleFullscreen(); } break;
+                case 'f':           if (this.managers.lyrics) { e.preventDefault(); this.managers.lyrics.toggleFullscreen(!this.managers.lyrics.isFullscreenActive()); } break;
                 case 'd':           e.preventDefault(); this._toggleDebug(); break;
                 case 'c': {
                     e.preventDefault();
@@ -827,8 +815,9 @@ class MusicPlayerApp {
         this._wire(p, 'seeked',         () => {
             if (p.paused) {
                 this._renderProgress();
-                if (this.managers.lyrics && this.state.compactMode === 'full')
-                    this.managers.lyrics.update(p.currentTime, 'full');
+                if (this.managers.lyrics &&
+                    (this.state.compactMode === 'full' || this.managers.lyrics.isFullscreenActive()))
+                    this.managers.lyrics.update(p.currentTime, this.state.compactMode);
             }
         });
 
