@@ -1,0 +1,118 @@
+name: Build Android APK
+
+# Runs automatically on every push to main.
+# Can also be triggered manually: Actions tab → "Build Android APK" → Run workflow.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ── 1. Check out your code ─────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Node.js (needed for Capacitor CLI) ───────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # ── 3. Install all npm dependencies (Capacitor + plugins) ─────────────
+      - name: Install dependencies
+        run: npm install
+
+      # ── 4. Set up Java 17 (required by Gradle / Android build tools) ───────
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # ── 5. Set up the Android SDK ──────────────────────────────────────────
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # ── 6. Generate the Android project from your web app ─────────────────
+      #    This is what "npx cap add android" does locally.
+      #    It creates the android/ folder containing the full Gradle project.
+      - name: Add Android platform
+        run: npx cap add android
+
+      # ── 7. Copy web assets + apply plugin config into the Android project ──
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      # ── 8. Inject Android permissions into the manifest ───────────────────
+      #    Capacitor plugins add most permissions automatically, but we
+      #    explicitly add the ones our bridge needs to guarantee they're present.
+      - name: Patch AndroidManifest.xml with required permissions
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          python3 - <<'EOF'
+          import re, pathlib
+
+          manifest = pathlib.Path("android/app/src/main/AndroidManifest.xml")
+          content  = manifest.read_text()
+
+          permissions = [
+              # Audio access — Android 13+ uses READ_MEDIA_AUDIO
+              'android.permission.READ_MEDIA_AUDIO',
+              # Fallback for Android 12 and below (capped at API 32)
+              'android.permission.READ_EXTERNAL_STORAGE',
+              # Keeps CPU alive during background playback
+              'android.permission.WAKE_LOCK',
+              # Required for foreground service (background audio notification)
+              'android.permission.FOREGROUND_SERVICE',
+              'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+              # Network access for lyrics fetching
+              'android.permission.INTERNET',
+          ]
+
+          lines = []
+          for perm in permissions:
+              tag = f'<uses-permission android:name="{perm}"'
+              if tag not in content:
+                  extra = ''
+                  if perm == 'android.permission.READ_EXTERNAL_STORAGE':
+                      extra = ' android:maxSdkVersion="32"'
+                  lines.append(f'    {tag}{extra} />')
+
+          if lines:
+              injection = '\n'.join(lines)
+              # Insert just before the closing </manifest> tag
+              content = content.replace('</manifest>', injection + '\n</manifest>')
+              manifest.write_text(content)
+              print(f"Injected {len(lines)} permission(s)")
+          else:
+              print("All permissions already present")
+          EOF
+
+      # ── 9. Build the debug APK ─────────────────────────────────────────────
+      #    assembleDebug is faster and needs no signing key.
+      #    The output is: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Make Gradle wrapper executable
+        run: chmod +x android/gradlew
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        env:
+          # Suppress Gradle daemon warnings in CI
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2048m"
+
+      # ── 10. Upload the APK so you can download it from the Actions tab ─────
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MusicPlayer-debug-${{ github.run_number }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          # Keep the APK for 30 days
+          retention-days: 30

@@ -1,0 +1,16 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Capacitor Android project — generated fresh by GitHub Actions, never committed
+android/
+
+# Backup files created during development
+*.bak
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
